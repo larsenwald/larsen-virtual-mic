@@ -932,12 +932,16 @@ function initCanvasInteraction() {
     if (panning) { panning = false; canvas.style.cursor = spaceDown ? 'grab' : ''; }
   });
 
-  // Scroll to zoom, two-finger swipe to pan (touchpad)
+  // Scroll to zoom, ctrl+scroll or two-finger swipe to pan (touchpad)
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     if (e.ctrlKey) {
-      // Pinch-to-zoom (touchpad) or ctrl+scroll
-      const delta = e.deltaY < 0 ? 1.08 : 0.92;
+      // Pinch-to-zoom (touchpad) or two-finger swipe → pan
+      cam.x -= e.deltaX;
+      cam.y -= e.deltaY;
+    } else {
+      // Scroll wheel → zoom toward cursor
+      const delta = e.deltaY < 0 ? 1.1 : 0.9;
       const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cam.zoom * delta));
       const cr = canvas.getBoundingClientRect();
       const mx = e.clientX - cr.left;
@@ -945,10 +949,6 @@ function initCanvasInteraction() {
       cam.x = mx - (mx - cam.x) * (newZoom / cam.zoom);
       cam.y = my - (my - cam.y) * (newZoom / cam.zoom);
       cam.zoom = newZoom;
-    } else {
-      // Two-finger swipe (touchpad) or plain scroll → pan
-      cam.x -= e.deltaX;
-      cam.y -= e.deltaY;
     }
     applyTransform();
   }, { passive: false });
