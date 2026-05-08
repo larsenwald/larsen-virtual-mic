@@ -536,7 +536,20 @@ class API:
 #  Entry point
 # ─────────────────────────────────────────────────────────────
 
+def create_tray_icon():
+    """Create a simple tray icon image — a filled circle in accent color."""
+    from PIL import Image, ImageDraw
+    size = 64
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    # Accent color #7c6af7
+    draw.ellipse([4, 4, size - 4, size - 4], fill=(124, 106, 247, 255))
+    return img
+
 if __name__ == "__main__":
+    import pystray
+    from PIL import Image
+
     api = API()
     index_path = os.path.join(BASE_DIR, "index.html")
     window = webview.create_window(
@@ -549,5 +562,42 @@ if __name__ == "__main__":
         resizable=True,
         background_color="#0d0d0f",
     )
+
+    tray_icon = None
+
+    def show_window():
+        window.show()
+        window.restore()
+
+    def quit_app():
+        tray_icon.stop()
+        engine.stop()
+        window.destroy()
+
+    def on_closing():
+        """Intercept window close — hide instead of closing."""
+        window.hide()
+        return False  # Prevent actual close
+
+    def setup_tray(icon):
+        icon.visible = True
+
+    tray_icon = pystray.Icon(
+        name="LarsenwaldVM",
+        icon=create_tray_icon(),
+        title="Larsenwald Virtual Mic",
+        menu=pystray.Menu(
+            pystray.MenuItem("Open", lambda: show_window(), default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit", lambda: quit_app()),
+        )
+    )
+
+    window.events.closing += on_closing
+
+    # Run tray in background thread
+    tray_thread = threading.Thread(target=tray_icon.run, args=(setup_tray,), daemon=True)
+    tray_thread.start()
+
     webview.start(debug=False)
     engine.stop()
