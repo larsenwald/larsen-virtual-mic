@@ -1099,26 +1099,22 @@ function buildPluginHTML(data) {
       <button class="plugin-close" onclick="removePlugin('${data.id}')">×</button>
     </div>
     <div class="plugin-body">
-      <div class="param-row">
-        <div class="param-label-row">
-          <span class="param-label">Gain</span>
-          <span class="param-value" id="gain-val-${data.id}">${db} dB</span>
+      <div class="knob-wrap">
+        <div class="knob-ring" id="knob-${data.id}">
+          <div class="knob-body" id="knob-body-${data.id}"></div>
+          <svg class="knob-svg" viewBox="0 0 42 42">
+            <path class="knob-arc-track" id="knob-track-${data.id}"
+              d="M 6.03 35.97 A 19 19 0 1 1 35.97 35.97"
+            />
+            <path class="knob-arc-fill" id="knob-arc-${data.id}"
+              d="M 6.03 35.97 A 19 19 0 1 1 35.97 35.97"
+              stroke-dasharray="0 100"
+            />
+          </svg>
         </div>
-        <div class="knob-wrap">
-          <div class="knob-ring" id="knob-${data.id}">
-            <div class="knob-body" id="knob-body-${data.id}"></div>
-            <svg class="knob-svg" viewBox="0 0 42 42">
-              <!-- track arc: 135deg to 405deg (270deg sweep), radius 19, center 21,21 -->
-              <path class="knob-arc-track" id="knob-track-${data.id}"
-                d="M 6.03 35.97 A 19 19 0 1 1 35.97 35.97"
-              />
-              <path class="knob-arc-fill" id="knob-arc-${data.id}"
-                d="M 6.03 35.97 A 19 19 0 1 1 35.97 35.97"
-                stroke-dasharray="0 100"
-              />
-            </svg>
-          </div>
-        </div>
+      </div>
+      <div style="text-align:center; padding-bottom:4px;">
+        <span class="param-value" id="gain-val-${data.id}">${db} dB</span>
       </div>
     </div>
   `;
