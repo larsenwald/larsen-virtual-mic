@@ -395,6 +395,16 @@
     will-change: transform;
   }
 
+  .arrow-line {
+    stroke: var(--border2);
+    stroke-width: 1.5;
+    fill: none;
+    stroke-linecap: round;
+  }
+  .arrow-head {
+    fill: var(--border2);
+  }
+
   /* Empty state */
   .canvas-empty {
     position: absolute;
@@ -696,6 +706,7 @@
         <div class="canvas-empty-text">Drag a plugin from the sidebar<br>to get started</div>
       </div>
       <div id="viewport">
+        <svg id="arrow-svg" style="position:absolute;top:0;left:0;width:0;height:0;overflow:visible;pointer-events:none;"></svg>
         <div id="plugin-container"></div>
       </div>
     </div>
@@ -964,7 +975,7 @@ async function spawnPlugin(type, screenX, screenY) {
   const w = screenToWorld(screenX, screenY);
   const data = await window.pywebview.api.add_plugin(type, w.x, w.y);
   renderPlugin(data);
-  updateOrderBadges();
+  updateArrows();
   updateEmptyState();
 }
 
@@ -987,7 +998,6 @@ function buildPluginHTML(data) {
   return `
     <div class="plugin-header" id="header-${data.id}">
       <span class="plugin-type-badge">Gain</span>
-      <span class="plugin-order-badge" id="order-${data.id}">—</span>
       <span class="plugin-header-gap"></span>
       <span class="plugin-chevron" id="chevron-${data.id}">
         <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
@@ -1078,13 +1088,13 @@ async function removePlugin(id) {
   const el = document.getElementById('plugin-' + id);
   if (el) el.remove();
   delete plugins[id];
-  updateOrderBadges();
+  updateArrows();
   updateEmptyState();
 }
 
 function togglePlugin(id) {
   const el = document.getElementById('plugin-' + id);
-  if (el) el.classList.toggle('expanded');
+  if (el) { el.classList.toggle('expanded'); updateArrows(); }
 }
 
 // ════════════════════════════════════════
@@ -1114,7 +1124,7 @@ function makeDraggable(el, id) {
       el.style.left = (worldX - 80) + 'px';
       el.style.top  = (worldY - 15) + 'px';
       if (plugins[id]) { plugins[id].data.x = worldX; plugins[id].data.y = worldY; }
-      updateOrderBadges();
+      updateArrows();
     };
 
     const onUp = async e2 => {
@@ -1138,13 +1148,51 @@ function makeDraggable(el, id) {
 //  Order badges + empty state
 // ════════════════════════════════════════
 
-function updateOrderBadges() {
-  Object.values(plugins)
-    .sort((a,b) => a.data.x - b.data.x)
-    .forEach((p, i) => {
-      const badge = document.getElementById('order-' + p.data.id);
-      if (badge) badge.textContent = '#' + (i + 1);
-    });
+// ════════════════════════════════════════
+//  Arrows + empty state
+// ════════════════════════════════════════
+
+function updateArrows() {
+  const svg = document.getElementById('arrow-svg');
+  svg.innerHTML = '';
+  const sorted = Object.values(plugins).sort((a, b) => a.data.x - b.data.x);
+  if (sorted.length < 2) return;
+
+  // Arrowhead marker
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  defs.innerHTML = `
+    <marker id="arrowhead" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <polygon class="arrow-head" points="0 0, 7 3.5, 0 7"/>
+    </marker>
+  `;
+  svg.appendChild(defs);
+
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i];
+    const b = sorted[i + 1];
+
+    const aEl = document.getElementById('plugin-' + a.data.id);
+    const bEl = document.getElementById('plugin-' + b.data.id);
+    if (!aEl || !bEl) continue;
+
+    // Right-center of a, left-center of b (in world coords)
+    const ax = parseFloat(aEl.style.left) + aEl.offsetWidth;
+    const ay = parseFloat(aEl.style.top)  + aEl.offsetHeight / 2;
+    const bx = parseFloat(bEl.style.left);
+    const by = parseFloat(bEl.style.top)  + bEl.offsetHeight / 2;
+
+    // Curved bezier
+    const cx1 = ax + (bx - ax) * 0.5;
+    const cy1 = ay;
+    const cx2 = ax + (bx - ax) * 0.5;
+    const cy2 = by;
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('class', 'arrow-line');
+    path.setAttribute('marker-end', 'url(#arrowhead)');
+    path.setAttribute('d', `M ${ax} ${ay} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${bx} ${by}`);
+    svg.appendChild(path);
+  }
 }
 
 function updateEmptyState() {
