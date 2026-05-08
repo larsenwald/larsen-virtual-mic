@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Larsen VM</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg:          #0d0d0f;
+    --bg1:         #111114;
+    --bg2:         #18181d;
+    --bg3:         #1f1f26;
+    --border:      #2a2a35;
+    --border2:     #3a3a48;
+    --text:        #d4d4e0;
+    --text-dim:    #6b6b80;
+    --text-faint:  #3a3a50;
+    --accent:      #7c6af7;
+    --accent2:     #5b4de0;
+    --accent-glow: rgba(124,106,247,0.18);
+    --red:         #e05b5b;
+    --green:       #5be08a;
+    --yellow:      #e0c05b;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* ─────────────────────────────────────
+     Screens
+  ───────────────────────────────────── */
+  .screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+  }
+  .screen.active { opacity: 1; pointer-events: all; }
+
+  /* ─────────────────────────────────────
+     Setup card (shared)
+  ───────────────────────────────────── */
+  .setup-card {
+    background: var(--bg1);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 480px;
+    padding: 40px 44px;
+    display: flex;
+    flex-direction: column;
+  }
+  .setup-logo {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 28px;
+  }
+  .setup-logo span { color: var(--text-dim); }
+  .setup-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.3;
+    margin-bottom: 14px;
+  }
+  .setup-body {
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.7;
+    margin-bottom: 32px;
+  }
+  .setup-body strong { color: var(--text); font-weight: 500; }
+  .setup-body .warn  { color: var(--yellow); }
+  .setup-body .device-name {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 6px;
+    color: var(--accent);
+  }
+  .setup-actions { display: flex; gap: 10px; }
+
+  .btn {
+    height: 36px;
+    padding: 0 20px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+    letter-spacing: 0.02em;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary  { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn-primary:hover:not(:disabled) { background: #8f7ef9; }
+  .btn-ghost    { background: transparent; color: var(--text-dim); border-color: var(--border2); }
+  .btn-ghost:hover:not(:disabled)   { border-color: var(--text-dim); color: var(--text); }
+  .btn-danger   { background: transparent; color: var(--red); border-color: #4a2a2a; }
+  .btn-danger:hover:not(:disabled)  { background: #2a1010; border-color: var(--red); }
+
+  /* ─────────────────────────────────────
+     Progress
+  ───────────────────────────────────── */
+  .progress-wrap { margin-top: 24px; display: none; flex-direction: column; gap: 10px; }
+  .progress-wrap.visible { display: flex; }
+  .progress-bar-outer { height: 3px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+  .progress-bar-inner {
+    height: 100%; background: var(--accent); border-radius: 2px;
+    width: 0%; transition: width 0.4s ease;
+  }
+  .progress-bar-inner.indeterminate {
+    width: 40%;
+    animation: indeterminate 1.4s ease-in-out infinite;
+  }
+  @keyframes indeterminate {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+  .progress-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+  }
+
+  /* ─────────────────────────────────────
+     Status dot
+  ───────────────────────────────────── */
+  .status-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    margin-right: 7px;
+    background: var(--text-faint);
+    vertical-align: middle;
+    position: relative; top: -1px;
+    flex-shrink: 0;
+  }
+  .status-dot.ok   { background: var(--green); }
+  .status-dot.err  { background: var(--red); }
+  .status-dot.busy { background: var(--yellow); animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+
+  /* ─────────────────────────────────────
+     Main app shell
+  ───────────────────────────────────── */
+  #screen-main {
+    align-items: stretch;
+    justify-content: flex-start;
+    flex-direction: column;
+  }
+
+  /* Top bar */
+  .topbar {
+    height: 44px;
+    background: var(--bg1);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 16px;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+  .topbar-logo {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    color: var(--accent);
+    text-transform: uppercase;
+    padding-right: 16px;
+    border-right: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .topbar-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .mic-select {
+    height: 28px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 12px;
+    padding: 0 28px 0 10px;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236b6b80'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 9px center;
+    min-width: 200px;
+    max-width: 300px;
+    transition: border-color 0.15s;
+  }
+  .mic-select:hover { border-color: var(--border2); }
+  .mic-select:focus { border-color: var(--accent); }
+  .engine-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin-left: auto;
+  }
+
+  /* ─────────────────────────────────────
+     Body: sidebar + canvas
+  ───────────────────────────────────── */
+  .app-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 172px;
+    flex-shrink: 0;
+    background: var(--bg1);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-header {
+    padding: 14px 14px 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .sidebar-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .sidebar-list::-webkit-scrollbar { width: 4px; }
+  .sidebar-list::-webkit-scrollbar-track { background: transparent; }
+  .sidebar-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Sidebar plugin tile */
+  .plugin-tile {
+    height: 44px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    padding: 0 11px;
+    gap: 9px;
+    cursor: grab;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .plugin-tile:hover { border-color: var(--border2); background: var(--bg3); }
+  .plugin-tile:active { cursor: grabbing; }
+  .plugin-tile.drag-active { border-color: var(--accent); background: var(--accent-glow); }
+
+  .tile-icon {
+    width: 22px; height: 22px;
+    border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .tile-icon-gain { background: rgba(124,106,247,0.15); color: var(--accent); }
+
+  .tile-info { display: flex; flex-direction: column; gap: 2px; }
+  .tile-name {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--text);
+    text-transform: uppercase;
+  }
+  .tile-desc { font-size: 10px; color: var(--text-faint); line-height: 1; }
+
+  .sidebar-drop-hint {
+    margin: 8px;
+    padding: 8px;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    text-align: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .sidebar-drop-hint.visible { opacity: 1; }
+
+  /* ─────────────────────────────────────
+     Canvas — clean, no grid
+  ───────────────────────────────────── */
+  .canvas-wrap {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .canvas-wrap::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.3) 100%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Ghost node while dragging from sidebar */
+  .drag-ghost {
+    position: fixed;
+    width: 160px;
+    background: var(--bg2);
+    border: 1px solid var(--accent);
+    border-radius: 5px;
+    opacity: 0.8;
+    pointer-events: none;
+    z-index: 9999;
+    box-shadow: 0 0 20px var(--accent-glow);
+  }
+  .drag-ghost-header {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .drag-ghost-body {
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .drag-ghost-line { width: 75%; height: 2px; background: var(--bg3); border-radius: 1px; }
+
+  /* Empty state */
+  .canvas-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .canvas-empty-icon { opacity: 0.1; }
+  .canvas-empty-text {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    color: var(--text-faint);
+    text-align: center;
+    line-height: 2;
+    text-transform: uppercase;
+  }
+
+  /* ─────────────────────────────────────
+     Plugin node
+  ───────────────────────────────────── */
+  .plugin-node {
+    position: absolute;
+    width: 160px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    cursor: grab;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.45);
+    z-index: 2;
+  }
+  .plugin-node:hover { border-color: var(--border2); }
+  .plugin-node.dragging {
+    cursor: grabbing;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), 0 8px 32px rgba(0,0,0,0.6), 0 0 20px var(--accent-glow);
+    z-index: 1000;
+  }
+
+  .plugin-header {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px 0 10px;
+    gap: 6px;
+    cursor: grab;
+  }
+  .plugin-node.expanded .plugin-header { border-bottom: 1px solid var(--border); }
+
+  .plugin-type-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px; font-weight: 600;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  .plugin-order-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    color: var(--text-faint);
+    background: var(--bg3);
+    border-radius: 2px;
+    padding: 1px 5px;
+  }
+  .plugin-header-gap { flex: 1; }
+
+  .plugin-chevron {
+    width: 16px; height: 16px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-faint);
+    transition: transform 0.18s ease, color 0.1s;
+    flex-shrink: 0;
+  }
+  .plugin-node.expanded .plugin-chevron { transform: rotate(180deg); color: var(--text-dim); }
+
+  .plugin-close {
+    width: 16px; height: 16px;
+    border-radius: 2px; border: none;
+    background: transparent; color: var(--text-faint);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; line-height: 1;
+    transition: color 0.1s, background 0.1s;
+  }
+  .plugin-close:hover { color: var(--red); background: rgba(224,91,91,0.12); }
+
+  /* Collapsible body */
+  .plugin-body {
+    overflow: hidden;
+    max-height: 0;
+    transition: max-height 0.2s ease, padding 0.2s ease;
+    padding: 0 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .plugin-node.expanded .plugin-body { max-height: 120px; padding: 12px 12px 14px; }
+
+  .param-row { display: flex; flex-direction: column; gap: 6px; }
+  .param-label-row { display: flex; justify-content: space-between; align-items: baseline; }
+  .param-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px; letter-spacing: 0.1em;
+    color: var(--text-faint); text-transform: uppercase;
+  }
+  .param-value { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--accent); }
+
+  .knob-wrap { display: flex; justify-content: center; padding: 4px 0 2px; }
+  .knob { width: 44px; height: 44px; cursor: ns-resize; display: block; }
+  .knob-track  { stroke: var(--bg3); stroke-width: 3.5; fill: none; }
+  .knob-fill   { stroke: var(--accent); stroke-width: 3.5; fill: none; stroke-linecap: round; }
+  .knob-dot    { fill: var(--accent); }
+  .knob-center { fill: var(--bg2); }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════
+     SCREEN: Checking
+══════════════════════════════════════ -->
+<div id="screen-checking" class="screen active">
+  <div class="setup-card">
+    <div class="setup-logo">Larsen VM <span>// startup</span></div>
+    <div class="setup-title">Checking dependencies…</div>
+    <div class="setup-body">Scanning for VB-Audio Virtual Cable driver.</div>
+    <div class="progress-wrap visible">
+      <div class="progress-bar-outer"><div class="progress-bar-inner indeterminate"></div></div>
+      <div class="progress-label">
+        <span class="status-dot busy"></span>
+        <span id="check-label">Scanning audio devices…</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     SCREEN: Consent — no VB-Audio
+══════════════════════════════════════ -->
+<div id="screen-consent-fresh" class="screen">
+  <div class="setup-card">
+    <div class="setup-logo">Larsen VM <span>// setup required</span></div>
+    <div class="setup-title">VB-Audio Virtual Cable is required</div>
+    <div class="setup-body">
+      Larsen VM routes your microphone through a DSP plugin chain and outputs to a virtual mic device that other apps can use.<br><br>
+      To do this, it needs to install <strong>VB-Audio Virtual Cable</strong> — a free, widely-used audio driver — on your system.<br><br>
+      The driver will be renamed to <span class="device-name">Larsen VM</span> and <span class="device-name">Larsen (Virtual Mic)</span> and configured exclusively for this app.
+    </div>
+    <div class="setup-actions">
+      <button class="btn btn-primary" onclick="consentAndInstall()">Install &amp; continue</button>
+      <button class="btn btn-danger"  onclick="window.close()">Decline &amp; exit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     SCREEN: Consent — VB-Audio hijack
+══════════════════════════════════════ -->
+<div id="screen-consent-hijack" class="screen">
+  <div class="setup-card">
+    <div class="setup-logo">Larsen VM <span>// driver conflict</span></div>
+    <div class="setup-title">VB-Audio Virtual Cable is already installed</div>
+    <div class="setup-body">
+      Larsen VM found an existing VB-Audio Virtual Cable installation on your system.<br><br>
+      <span class="warn">⚠ This app will take full ownership of that driver.</span> It will be uninstalled and reinstalled fresh, then renamed and reconfigured exclusively for Larsen VM.<br><br>
+      <strong>If you're currently using VB-Audio for anything else</strong> — another app, your own routing setup — that configuration will be permanently overwritten.<br><br>
+      If that's not okay, do not continue.
+    </div>
+    <div class="setup-actions">
+      <button class="btn btn-primary" onclick="consentAndInstall()">Take ownership &amp; continue</button>
+      <button class="btn btn-danger"  onclick="window.close()">Decline &amp; exit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     SCREEN: Installing
+══════════════════════════════════════ -->
+<div id="screen-installing" class="screen">
+  <div class="setup-card">
+    <div class="setup-logo">Larsen VM <span>// installing</span></div>
+    <div class="setup-title">Setting up audio driver…</div>
+    <div class="setup-body">This will take a moment. Do not close the app.</div>
+    <div class="progress-wrap visible">
+      <div class="progress-bar-outer"><div class="progress-bar-inner indeterminate"></div></div>
+      <div class="progress-label">
+        <span class="status-dot busy"></span>
+        <span id="install-label">Installing VB-Audio Virtual Cable…</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     SCREEN: Waiting for devices
+══════════════════════════════════════ -->
+<div id="screen-waiting" class="screen">
+  <div class="setup-card">
+    <div class="setup-logo">Larsen VM <span>// initializing</span></div>
+    <div class="setup-title">Waiting for audio devices…</div>
+    <div class="setup-body">Driver installed and configured. Waiting for Windows to register the new devices.</div>
+    <div class="progress-wrap visible">
+      <div class="progress-bar-outer"><div class="progress-bar-inner indeterminate"></div></div>
+      <div class="progress-label">
+        <span class="status-dot busy"></span>
+        <span>Polling sounddevice…</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     SCREEN: Error
+══════════════════════════════════════ -->
+<div id="screen-error" class="screen">
+  <div class="setup-card">
+    <div class="setup-logo">Larsen VM <span>// error</span></div>
+    <div class="setup-title">Setup failed</div>
+    <div class="setup-body" id="error-body">An unexpected error occurred during setup.</div>
+    <div class="setup-actions">
+      <button class="btn btn-ghost" onclick="window.close()">Exit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════
+     SCREEN: Main app
+══════════════════════════════════════ -->
+<div id="screen-main" class="screen">
+
+  <div class="topbar">
+    <div class="topbar-logo">Larsen VM</div>
+    <span class="topbar-label">Input</span>
+    <select class="mic-select" id="mic-select" onchange="onMicChange(this.value)">
+      <option value="">— select microphone —</option>
+    </select>
+    <div class="engine-badge">
+      <span class="status-dot" id="engine-dot"></span>
+      <span id="engine-label">idle</span>
+    </div>
+  </div>
+
+  <div class="app-body">
+
+    <div class="sidebar">
+      <div class="sidebar-header">Plugins</div>
+      <div class="sidebar-list" id="sidebar-list"></div>
+      <div class="sidebar-drop-hint" id="drop-hint">Drop on canvas</div>
+    </div>
+
+    <div class="canvas-wrap" id="canvas">
+      <div class="canvas-empty" id="canvas-empty">
+        <svg class="canvas-empty-icon" width="44" height="44" viewBox="0 0 44 44" fill="none">
+          <rect x="7" y="13" width="30" height="18" rx="2" stroke="white" stroke-width="1.5"/>
+          <circle cx="16" cy="22" r="4" stroke="white" stroke-width="1.5"/>
+          <line x1="24" y1="18" x2="31" y2="18" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="24" y1="22" x2="33" y2="22" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="24" y1="26" x2="29" y2="26" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="2"  y1="22" x2="7"  y2="22" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="37" y1="22" x2="42" y2="22" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <div class="canvas-empty-text">Drag a plugin from the sidebar<br>to get started</div>
+      </div>
+      <div id="plugin-container"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Ghost node follows cursor while dragging from sidebar -->
+<div class="drag-ghost" id="drag-ghost" style="display:none;">
+  <div class="drag-ghost-header" id="drag-ghost-label">—</div>
+  <div class="drag-ghost-body"><div class="drag-ghost-line"></div></div>
+</div>
+
+<script>
+// ════════════════════════════════════════
+//  Screen management
+// ════════════════════════════════════════
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+}
+
+// ════════════════════════════════════════
+//  Plugin type registry
+//  Add new entries here as you build plugins
+// ════════════════════════════════════════
+
+const PLUGIN_TYPES = [
+  { type: 'gain', name: 'Gain', desc: 'Volume', iconClass: 'tile-icon-gain', iconLabel: 'G' },
+  // { type: 'eq',   name: 'EQ',   desc: 'Equalizer', iconClass: 'tile-icon-eq', iconLabel: 'EQ' },
+];
+
+function buildSidebar() {
+  const list = document.getElementById('sidebar-list');
+  list.innerHTML = '';
+  PLUGIN_TYPES.forEach(pt => {
+    const tile = document.createElement('div');
+    tile.className = 'plugin-tile';
+    tile.dataset.pluginType = pt.type;
+    tile.innerHTML = `
+      <div class="tile-icon ${pt.iconClass}">${pt.iconLabel}</div>
+      <div class="tile-info">
+        <span class="tile-name">${pt.name}</span>
+        <span class="tile-desc">${pt.desc}</span>
+      </div>
+    `;
+    bindTileDrag(tile, pt);
+    list.appendChild(tile);
+  });
+}
+
+// ════════════════════════════════════════
+//  Sidebar drag → canvas drop
+// ════════════════════════════════════════
+
+let activeDrag = null;
+
+function bindTileDrag(tile, pt) {
+  tile.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const ghost = document.getElementById('drag-ghost');
+    document.getElementById('drag-ghost-label').textContent = pt.name;
+    ghost.style.display = 'block';
+    ghost.style.left = (e.clientX - 80) + 'px';
+    ghost.style.top  = (e.clientY - 15) + 'px';
+    tile.classList.add('drag-active');
+    document.getElementById('drop-hint').classList.add('visible');
+    activeDrag = { type: pt.type };
+
+    const onMove = e2 => {
+      ghost.style.left = (e2.clientX - 80) + 'px';
+      ghost.style.top  = (e2.clientY - 15) + 'px';
+    };
+
+    const onUp = async e2 => {
+      ghost.style.display = 'none';
+      tile.classList.remove('drag-active');
+      document.getElementById('drop-hint').classList.remove('visible');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+
+      const canvas = document.getElementById('canvas');
+      const rect = canvas.getBoundingClientRect();
+      if (e2.clientX >= rect.left && e2.clientX <= rect.right &&
+          e2.clientY >= rect.top  && e2.clientY <= rect.bottom) {
+        await spawnPlugin(activeDrag.type, e2.clientX - rect.left, e2.clientY - rect.top);
+      }
+      activeDrag = null;
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+// ════════════════════════════════════════
+//  Startup / setup flow
+// ════════════════════════════════════════
+
+async function startup() {
+  showScreen('checking');
+  await delay(500);
+
+  let state;
+  try {
+    state = await window.pywebview.api.get_vbaudio_state();
+  } catch(e) {
+    showError('Failed to check driver state: ' + e);
+    return;
+  }
+
+  if (state.installed && state.ours) {
+    await loadMainScreen();
+    return;
+  }
+  if (!state.installed) {
+    showScreen('consent-fresh');
+    return;
+  }
+  showScreen('consent-hijack');
+}
+
+async function consentAndInstall() {
+  showScreen('installing');
+  let result;
+  try {
+    result = await window.pywebview.api.run_setup();
+  } catch(e) {
+    showError('Setup threw an exception: ' + e);
+    return;
+  }
+  if (!result.success) {
+    showError(result.error || 'Unknown error during setup.');
+    return;
+  }
+  showScreen('waiting');
+  const devResult = await window.pywebview.api.wait_for_devices();
+  if (!devResult.ready) {
+    showError('Audio devices did not appear after setup. Try restarting the app.');
+    return;
+  }
+  await loadMainScreen();
+}
+
+async function loadMainScreen() {
+  buildSidebar();
+  const mics = await window.pywebview.api.get_mics();
+  const sel = document.getElementById('mic-select');
+  sel.innerHTML = '<option value="">— select microphone —</option>';
+  mics.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m.index;
+    opt.textContent = m.name;
+    sel.appendChild(opt);
+  });
+  if (mics.length === 1) {
+    sel.value = mics[0].index;
+    await onMicChange(mics[0].index);
+  }
+  showScreen('main');
+}
+
+function showError(msg) {
+  document.getElementById('error-body').textContent = msg;
+  showScreen('error');
+}
+
+// ════════════════════════════════════════
+//  Mic + engine
+// ════════════════════════════════════════
+
+async function onMicChange(deviceIndex) {
+  if (deviceIndex === '' || deviceIndex === undefined) return;
+  updateEngineStatus(null, 'starting…');
+  const result = await window.pywebview.api.set_mic(parseInt(deviceIndex));
+  updateEngineStatus(result.success, result.success ? 'running' : (result.error || 'error'));
+}
+
+function updateEngineStatus(ok, label) {
+  document.getElementById('engine-dot').className =
+    'status-dot' + (ok === true ? ' ok' : ok === false ? ' err' : ' busy');
+  document.getElementById('engine-label').textContent = label;
+}
+
+// ════════════════════════════════════════
+//  Plugin spawning + rendering
+// ════════════════════════════════════════
+
+const plugins = {};
+
+async function spawnPlugin(type, x, y) {
+  const data = await window.pywebview.api.add_plugin(type, x, y);
+  renderPlugin(data);
+  updateOrderBadges();
+  updateEmptyState();
+}
+
+function renderPlugin(data) {
+  const el = document.createElement('div');
+  el.className = 'plugin-node';
+  el.id = 'plugin-' + data.id;
+  el.style.left = (data.x - 80) + 'px';
+  el.style.top  = (data.y - 50) + 'px';
+  el.innerHTML = buildPluginHTML(data);
+  makeDraggable(el, data.id);
+  document.getElementById('plugin-container').appendChild(el);
+  plugins[data.id] = { data, el };
+  refreshKnob(data.id, data.params.gain_db || 0);
+  bindKnob(data.id);
+}
+
+function buildPluginHTML(data) {
+  const db = (data.params.gain_db || 0).toFixed(1);
+  return `
+    <div class="plugin-header" onclick="togglePlugin('${data.id}', event)">
+      <span class="plugin-type-badge">Gain</span>
+      <span class="plugin-order-badge" id="order-${data.id}">—</span>
+      <span class="plugin-header-gap"></span>
+      <span class="plugin-chevron" id="chevron-${data.id}">
+        <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
+          <path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <button class="plugin-close" onclick="removePlugin('${data.id}')">×</button>
+    </div>
+    <div class="plugin-body">
+      <div class="param-row">
+        <div class="param-label-row">
+          <span class="param-label">Gain</span>
+          <span class="param-value" id="gain-val-${data.id}">${db} dB</span>
+        </div>
+        <div class="knob-wrap">
+          <svg class="knob" id="knob-${data.id}" viewBox="0 0 44 44">
+            <circle class="knob-center" cx="22" cy="22" r="14"/>
+            <path class="knob-track"  d="M 22 22 m -12 0 a 12 12 0 1 1 24 0" stroke-dasharray="75.4 75.4"/>
+            <path class="knob-fill"   d="M 22 22 m -12 0 a 12 12 0 1 1 24 0" stroke-dasharray="0 75.4" id="knob-fill-${data.id}"/>
+            <circle class="knob-dot" id="knob-dot-${data.id}" cx="22" cy="10" r="2.5"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function refreshKnob(id, db) {
+  // Range: -40 to +40 dB
+  const t = Math.max(0, Math.min(1, (db + 40) / 80));
+  // Full arc dasharray = 75.4, usable 270° = 56.6
+  const fill = document.getElementById('knob-fill-' + id);
+  if (fill) fill.style.strokeDasharray = `${(t * 56.6).toFixed(1)} 75.4`;
+  const dot = document.getElementById('knob-dot-' + id);
+  if (dot) {
+    const rad = ((-135 + t * 270) - 90) * Math.PI / 180;
+    dot.setAttribute('cx', (22 + 12 * Math.cos(rad)).toFixed(2));
+    dot.setAttribute('cy', (22 + 12 * Math.sin(rad)).toFixed(2));
+  }
+}
+
+function bindKnob(id) {
+  const knob = document.getElementById('knob-' + id);
+  if (!knob) return;
+  let startY, startVal;
+  knob.addEventListener('mousedown', e => {
+    e.preventDefault(); e.stopPropagation();
+    startY = e.clientY;
+    startVal = plugins[id] ? (plugins[id].data.params.gain_db || 0) : 0;
+    const onMove = e2 => {
+      const val = Math.max(-40, Math.min(40, startVal + (startY - e2.clientY) * 0.5));
+      onGainChange(id, val);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+async function onGainChange(id, value) {
+  const db = parseFloat(value);
+  document.getElementById('gain-val-' + id).textContent = db.toFixed(1) + ' dB';
+  refreshKnob(id, db);
+  if (plugins[id]) plugins[id].data.params.gain_db = db;
+  await window.pywebview.api.update_plugin_param(id, 'gain_db', db);
+}
+
+async function removePlugin(id) {
+  await window.pywebview.api.remove_plugin(id);
+  const el = document.getElementById('plugin-' + id);
+  if (el) el.remove();
+  delete plugins[id];
+  updateOrderBadges();
+  updateEmptyState();
+}
+
+function togglePlugin(id, e) {
+  if (e.target.closest('.plugin-close')) return;
+  // Suppress if this mouseup followed a drag
+  if (e.currentTarget._wasDragged) { e.currentTarget._wasDragged = false; return; }
+  const el = document.getElementById('plugin-' + id);
+  if (el) el.classList.toggle('expanded');
+}
+
+// ════════════════════════════════════════
+//  Plugin dragging on canvas
+// ════════════════════════════════════════
+
+function makeDraggable(el, id) {
+  el.addEventListener('mousedown', e => {
+    if (e.target.closest('.plugin-close') ||
+        e.target.closest('.knob')) return;
+    const canvas = document.getElementById('canvas');
+    const cr = canvas.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    const ox = e.clientX - er.left;
+    const oy = e.clientY - er.top;
+    const startX = e.clientX, startY = e.clientY;
+    let dragging = false;
+
+    const onMove = e2 => {
+      if (!dragging) {
+        if (Math.abs(e2.clientX - startX) < 4 && Math.abs(e2.clientY - startY) < 4) return;
+        dragging = true;
+        e.preventDefault();
+        el.classList.add('dragging');
+        el._wasDragged = true;
+      }
+      const x = e2.clientX - cr.left - ox;
+      const y = e2.clientY - cr.top  - oy;
+      el.style.left = x + 'px';
+      el.style.top  = y + 'px';
+      if (plugins[id]) { plugins[id].data.x = x + 80; plugins[id].data.y = y + 15; }
+      updateOrderBadges();
+    };
+    const onUp = async e2 => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      if (!dragging) return;
+      el.classList.remove('dragging');
+      if (plugins[id])
+        await window.pywebview.api.update_plugin_position(id, plugins[id].data.x, plugins[id].data.y);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+// ════════════════════════════════════════
+//  Order badges + empty state
+// ════════════════════════════════════════
+
+function updateOrderBadges() {
+  Object.values(plugins)
+    .sort((a,b) => a.data.x - b.data.x)
+    .forEach((p, i) => {
+      const badge = document.getElementById('order-' + p.data.id);
+      if (badge) badge.textContent = '#' + (i + 1);
+    });
+}
+
+function updateEmptyState() {
+  document.getElementById('canvas-empty').style.display =
+    Object.keys(plugins).length > 0 ? 'none' : 'flex';
+}
+
+// ════════════════════════════════════════
+//  Boot
+// ════════════════════════════════════════
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+window.addEventListener('pywebviewready', () => startup());
+setTimeout(() => {
+  if (document.getElementById('screen-checking').classList.contains('active')
+      && window.pywebview?.api) startup();
+}, 1000);
+</script>
+</body>
+</html>
