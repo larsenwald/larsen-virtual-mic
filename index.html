@@ -424,12 +424,7 @@
     z-index: 2;
   }
   .plugin-node:hover { border-color: var(--border2); }
-  .plugin-node.dragging {
-    cursor: grabbing;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent), 0 8px 32px rgba(0,0,0,0.6), 0 0 20px var(--accent-glow);
-    z-index: 1000;
-  }
+  .plugin-node.dragging { cursor: grabbing; z-index: 1000; }
 
   .plugin-header {
     height: 30px;
@@ -865,7 +860,7 @@ function renderPlugin(data) {
 function buildPluginHTML(data) {
   const db = (data.params.gain_db || 0).toFixed(1);
   return `
-    <div class="plugin-header" onclick="togglePlugin('${data.id}', event)">
+    <div class="plugin-header" id="header-${data.id}">
       <span class="plugin-type-badge">Gain</span>
       <span class="plugin-order-badge" id="order-${data.id}">—</span>
       <span class="plugin-header-gap"></span>
@@ -947,10 +942,7 @@ async function removePlugin(id) {
   updateEmptyState();
 }
 
-function togglePlugin(id, e) {
-  if (e.target.closest('.plugin-close')) return;
-  // Suppress if this mouseup followed a drag
-  if (e.currentTarget._wasDragged) { e.currentTarget._wasDragged = false; return; }
+function togglePlugin(id) {
   const el = document.getElementById('plugin-' + id);
   if (el) el.classList.toggle('expanded');
 }
@@ -963,21 +955,20 @@ function makeDraggable(el, id) {
   el.addEventListener('mousedown', e => {
     if (e.target.closest('.plugin-close') ||
         e.target.closest('.knob')) return;
+
     const canvas = document.getElementById('canvas');
     const cr = canvas.getBoundingClientRect();
     const er = el.getBoundingClientRect();
     const ox = e.clientX - er.left;
     const oy = e.clientY - er.top;
     const startX = e.clientX, startY = e.clientY;
-    let dragging = false;
+    let dragged = false;
 
     const onMove = e2 => {
-      if (!dragging) {
-        if (Math.abs(e2.clientX - startX) < 4 && Math.abs(e2.clientY - startY) < 4) return;
-        dragging = true;
-        e.preventDefault();
+      if (Math.abs(e2.clientX - startX) < 4 && Math.abs(e2.clientY - startY) < 4) return;
+      if (!dragged) {
+        dragged = true;
         el.classList.add('dragging');
-        el._wasDragged = true;
       }
       const x = e2.clientX - cr.left - ox;
       const y = e2.clientY - cr.top  - oy;
@@ -986,14 +977,21 @@ function makeDraggable(el, id) {
       if (plugins[id]) { plugins[id].data.x = x + 80; plugins[id].data.y = y + 15; }
       updateOrderBadges();
     };
+
     const onUp = async e2 => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      if (!dragging) return;
       el.classList.remove('dragging');
-      if (plugins[id])
-        await window.pywebview.api.update_plugin_position(id, plugins[id].data.x, plugins[id].data.y);
+      if (dragged) {
+        // Was a drag — persist position, do NOT toggle
+        if (plugins[id])
+          await window.pywebview.api.update_plugin_position(id, plugins[id].data.x, plugins[id].data.y);
+      } else {
+        // Was a click — toggle expand only if not on close button
+        if (!e2.target.closest('.plugin-close')) togglePlugin(id);
+      }
     };
+
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   });

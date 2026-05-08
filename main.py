@@ -101,29 +101,33 @@ class AudioEngine:
         self.running = False
 
     def find_larsen_output(self) -> Optional[int]:
-        """Find our renamed VB-Audio output device (what we pipe audio INTO)."""
         devices = sd.query_devices()
-        # Look for our renamed device first
+        hostapis = sd.query_hostapis()
+        wasapi_index = next(
+            (i for i, h in enumerate(hostapis) if "wasapi" in h["name"].lower()),
+            None
+        )
         for i, d in enumerate(devices):
-            if d["max_output_channels"] > 0:
+            if d["max_output_channels"] > 0 and d["hostapi"] == wasapi_index:
                 name = d["name"].lower()
-                if "larsen vm" in name:
-                    return i
-        # Fallback: any CABLE Input VB-Audio device
-        for i, d in enumerate(devices):
-            if d["max_output_channels"] > 0:
-                name = d["name"].lower()
-                if "cable input" in name and "vb-audio" in name:
+                if "larsen vm" in name or "cable input" in name:
                     return i
         return None
 
     def get_mic_list(self) -> list[dict]:
         devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+
+        # Find the WASAPI host API index
+        wasapi_index = next(
+            (i for i, h in enumerate(hostapis) if "wasapi" in h["name"].lower()),
+            None
+        )
+
         mics = []
         for i, d in enumerate(devices):
-            if d["max_input_channels"] > 0:
+            if d["max_input_channels"] > 0 and d["hostapi"] == wasapi_index:
                 name = d["name"].lower()
-                # Exclude VB-Audio virtual devices from mic picker
                 skip = any(k in name for k in ["vb-audio", "cable output", "larsen", "virtual mic"])
                 if not skip:
                     mics.append({"index": i, "name": d["name"]})
