@@ -819,14 +819,31 @@ async function startup() {
     return;
   }
 
-  if (state.installed && state.ours) {
+  // ✅ Installed + names exactly correct → pass through
+  if (state.installed && state.names_correct) {
     await loadMainScreen();
     return;
   }
+
+  // ⚠️ Installed + we own it but names reverted (e.g. after reboot) → silent reconfigure
+  if (state.installed && state.names_ours && !state.names_correct) {
+    document.getElementById('check-label').textContent = 'Reconfiguring devices…';
+    const result = await window.pywebview.api.run_reconfigure();
+    if (!result.success) {
+      showError(result.error || 'Reconfigure failed.');
+      return;
+    }
+    await loadMainScreen();
+    return;
+  }
+
+  // ❌ Not installed → fresh install consent
   if (!state.installed) {
     showScreen('consent-fresh');
     return;
   }
+
+  // ✅ Installed but not ours → hijack warning
   showScreen('consent-hijack');
 }
 
@@ -1161,13 +1178,7 @@ function updateArrows() {
   const svg = document.getElementById('arrow-svg');
   const canvas = document.getElementById('canvas');
   if (!svg || !canvas) return;
-  svg.innerHTML = `
-    <defs>
-      <marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-        <path d="M0,0 L0,6 L8,3 z" fill="var(--border2)"/>
-      </marker>
-    </defs>
-  `;
+  svg.innerHTML = '';
 
   const sorted = Object.values(plugins).sort((a, b) => a.data.x - b.data.x);
   if (sorted.length < 2) return;
@@ -1183,26 +1194,43 @@ function updateArrows() {
     const bHeader = bEl.querySelector('.plugin-header');
     if (!aHeader || !bHeader) continue;
 
-    const aRect = aEl.getBoundingClientRect();
-    const bRect = bEl.getBoundingClientRect();
+    const aRect  = aEl.getBoundingClientRect();
+    const bRect  = bEl.getBoundingClientRect();
     const aHRect = aHeader.getBoundingClientRect();
     const bHRect = bHeader.getBoundingClientRect();
 
-    // Right edge of a, left edge of b — both at header vertical center
     const ax = aRect.right  - cr.left;
     const ay = aHRect.top + aHRect.height / 2 - cr.top;
     const bx = bRect.left   - cr.left;
     const by = bHRect.top + bHRect.height / 2 - cr.top;
-
     const cx = (ax + bx) / 2;
 
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', `M ${ax} ${ay} C ${cx} ${ay}, ${cx} ${by}, ${bx} ${by}`);
-    path.setAttribute('stroke', 'var(--border2)');
-    path.setAttribute('stroke-width', '1.5');
-    path.setAttribute('fill', 'none');
-    path.setAttribute('marker-end', 'url(#ah)');
-    svg.appendChild(path);
+    const d = `M ${ax} ${ay} C ${cx} ${ay}, ${cx} ${by}, ${bx} ${by}`;
+
+    // Dim undertrack
+    const track = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    track.setAttribute('d', d);
+    track.setAttribute('stroke', 'var(--border)');
+    track.setAttribute('stroke-width', '1.5');
+    track.setAttribute('fill', 'none');
+    svg.appendChild(track);
+
+    // Animated dashes flowing left → right
+    const flow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    flow.setAttribute('d', d);
+    flow.setAttribute('stroke', 'var(--accent)');
+    flow.setAttribute('stroke-width', '1.5');
+    flow.setAttribute('fill', 'none');
+    flow.setAttribute('stroke-dasharray', '5 6');
+    flow.setAttribute('stroke-opacity', '0.6');
+    const anim = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+    anim.setAttribute('attributeName', 'stroke-dashoffset');
+    anim.setAttribute('from', '11');
+    anim.setAttribute('to', '0');
+    anim.setAttribute('dur', '0.4s');
+    anim.setAttribute('repeatCount', 'indefinite');
+    flow.appendChild(anim);
+    svg.appendChild(flow);
   }
 }
 

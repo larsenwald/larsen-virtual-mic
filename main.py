@@ -301,26 +301,43 @@ Write-Output "WRAPPER_DONE"
 def check_vbaudio_state() -> dict:
     """
     Returns:
-      { "installed": bool, "ours": bool }
-    installed = VB-Audio driver is present at all
-    ours      = devices are already renamed to our names (Larsenwald VM / Larsenwald Virtual Mic)
+      {
+        "installed": bool,   # VB-Audio driver present at all
+        "names_ours": bool,  # 'before' field contains 'Larsenwald' (we own it)
+        "names_correct": bool # both before+inside match exactly what we set
+      }
+
+    Decision tree:
+      not installed                          → fresh install consent
+      installed + not names_ours             → hijack warning → reinstall + configure
+      installed + names_ours + not correct   → silent reconfigure (names reverted after reboot)
+      installed + names_ours + correct       → pass through
     """
     print("[CHECK] scanning registry for VB-Audio state...")
+
+    EXPECTED = {
+        "render":  {"before": "Larsenwald VM", "inside": "Don't Touch"},
+        "capture": {"before": "Larsenwald",    "inside": "Virtual Mic"},
+    }
+
     try:
         import winreg
-        result = {"installed": False, "ours": False}
+        result = {"installed": False, "names_ours": False, "names_correct": False}
 
         def scan_hive(hive_path):
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, hive_path)
             count = winreg.QueryInfoKey(key)[0]
             found_vbaudio = False
-            found_ours = False
+            found_ours    = False
+            found_correct = False
+            hive_type = "render" if "Render" in hive_path else "capture"
+            exp = EXPECTED[hive_type]
+
             for i in range(count):
                 sub_name = winreg.EnumKey(key, i)
                 try:
                     props_key = winreg.OpenKey(key, f"{sub_name}\\Properties")
-                    before = ""
-                    inside = ""
+                    before, inside = "", ""
                     try:
                         before, _ = winreg.QueryValueEx(props_key, "{a45c254e-df1c-4efd-8020-67d146a850e0},2")
                     except Exception:
@@ -337,26 +354,26 @@ def check_vbaudio_state() -> dict:
                         found_vbaudio = True
                     if "larsenwald" in before.lower():
                         found_ours = True
+                        # Check if both fields match exactly
+                        if before == exp["before"] and inside == exp["inside"]:
+                            found_correct = True
                 except Exception as e:
                     print(f"[CHECK]   error reading device: {e}")
             winreg.CloseKey(key)
-            return found_vbaudio, found_ours
+            return found_vbaudio, found_ours, found_correct
 
-        render_vb, render_ours = scan_hive(
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render"
-        )
-        capture_vb, capture_ours = scan_hive(
-            r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture"
-        )
+        render_vb,  render_ours,  render_correct  = scan_hive(r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render")
+        capture_vb, capture_ours, capture_correct = scan_hive(r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture")
 
-        result["installed"] = render_vb or capture_vb
-        result["ours"] = render_ours and capture_ours
+        result["installed"]     = render_vb or capture_vb
+        result["names_ours"]    = render_ours and capture_ours
+        result["names_correct"] = render_correct and capture_correct
         print(f"[CHECK] result: {result}")
         return result
 
     except Exception as e:
         print(f"[CHECK] error: {e}")
-        return {"installed": False, "ours": False}
+        return {"installed": False, "names_ours": False, "names_correct": False}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -371,6 +388,15 @@ class API:
     def get_vbaudio_state(self):
         """Called on launch. Returns install state so frontend can decide which screen to show."""
         return check_vbaudio_state()
+
+    def run_reconfigure(self):
+        """Silently reconfigure devices (names reverted after reboot). No reinstall."""
+        print("[RECONFIG] running configure as SYSTEM...")
+        ok, out = run_configure_as_system()
+        if not ok:
+            return {"success": False, "error": f"Reconfigure failed: {out}"}
+        print("[RECONFIG] done")
+        return {"success": True}
 
     def run_setup(self):
         """Install VB-Audio + configure devices. Called after user consent."""
@@ -422,7 +448,7 @@ class API:
         while time.time() < deadline:
             state = check_vbaudio_state()
             print(f"[WAIT] state: {state}")
-            if state["installed"] and state["ours"]:
+            if state["installed"] and state["names_correct"]:
                 print("[WAIT] devices ready")
                 return {"ready": True}
             time.sleep(1)
