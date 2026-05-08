@@ -485,12 +485,15 @@
 
   .plugin-chevron {
     width: 16px; height: 16px;
-    display: flex; align-items: center; justify-content: center;
-    color: var(--text-faint);
-    transition: transform 0.18s ease, color 0.1s;
+    display: none;
+    align-items: center; justify-content: center;
+    color: var(--text-dim);
+    cursor: pointer;
     flex-shrink: 0;
+    transition: color 0.1s;
   }
-  .plugin-node.expanded .plugin-chevron { transform: rotate(180deg); color: var(--text-dim); }
+  .plugin-chevron:hover { color: var(--text); }
+  .plugin-node.expanded .plugin-chevron { display: flex; }
 
   .plugin-close {
     width: 16px; height: 16px;
@@ -1001,9 +1004,10 @@ function initCanvasInteraction() {
         const header = document.querySelector(`#plugin-${p.data.id} .plugin-header`);
         if (!header) return;
         const hr = header.getBoundingClientRect();
-        const hcx = hr.left + hr.width  / 2 - cr.left;
-        const hcy = hr.top  + hr.height / 2 - cr.top;
-        if (hcx >= x && hcx <= x + w && hcy >= y && hcy <= y + h) {
+        const hx = hr.left - cr.left;
+        const hy = hr.top  - cr.top;
+        // Intersect: rect touches header at all
+        if (hx < x + w && hx + hr.width > x && hy < y + h && hy + hr.height > y) {
           selectPlugin(p.data.id);
         }
       });
@@ -1084,9 +1088,9 @@ function buildPluginHTML(data) {
     <div class="plugin-header" id="header-${data.id}">
       <span class="plugin-type-badge">Gain</span>
       <span class="plugin-header-gap"></span>
-      <span class="plugin-chevron" id="chevron-${data.id}">
+      <span class="plugin-chevron" id="chevron-${data.id}" onclick="togglePlugin('${data.id}')">
         <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
-          <path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M1 5l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </span>
       <button class="plugin-close" onclick="removePlugin('${data.id}')">×</button>
@@ -1201,10 +1205,18 @@ function deselectAll() {
   selected.clear();
 }
 
+function expandPlugin(id) {
+  const el = document.getElementById('plugin-' + id);
+  if (el && !el.classList.contains('expanded')) {
+    el.classList.add('expanded');
+    setTimeout(updateArrows, 220);
+  }
+}
+
 function togglePlugin(id) {
   const el = document.getElementById('plugin-' + id);
   if (el) {
-    el.classList.toggle('expanded');
+    el.classList.remove('expanded');
     setTimeout(updateArrows, 220);
   }
 }
@@ -1272,11 +1284,11 @@ function makeDraggable(el, id) {
     document.addEventListener('mouseup', onUp);
   });
 
-  // Double-click to expand/collapse
+  // Double-click to expand
   el.addEventListener('dblclick', e => {
-    if (e.target.closest('.plugin-close') || e.target.closest('.knob-ring')) return;
+    if (e.target.closest('.plugin-close') || e.target.closest('.knob-ring') || e.target.closest('.plugin-chevron')) return;
     e.stopPropagation();
-    togglePlugin(id);
+    expandPlugin(id);
   });
 }
 
