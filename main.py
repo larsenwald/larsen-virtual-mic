@@ -362,6 +362,15 @@ class API:
 
     def run_setup(self):
         """Install VB-Audio + configure devices. Called after user consent."""
+        # Save current default playback device before we touch anything
+        default_device_id = None
+        try:
+            from pycaw.pycaw import AudioUtilities
+            default_device_id = AudioUtilities.GetSpeakers().id
+            print(f"[SETUP] saved default playback device: {default_device_id}")
+        except Exception as e:
+            print(f"[SETUP] could not save default device: {e}")
+
         print("[SETUP] starting install...")
         install_script = os.path.join(SCRIPTS_DIR, "install_vbaudio.ps1")
         ok, out = run_powershell(install_script, ["-DriversPath", DRIVERS_DIR])
@@ -381,10 +390,14 @@ class API:
         print("[SETUP] configure done, sleeping 3s...")
         time.sleep(3)
 
-        # Reinitialize PortAudio once so sounddevice sees the new driver
-        print("[SETUP] reinitializing PortAudio...")
-        sd._terminate()
-        sd._initialize()
+        # Restore default playback device
+        if default_device_id:
+            try:
+                from pycaw.pycaw import AudioUtilities
+                AudioUtilities.SetDefaultDevice(default_device_id)
+                print(f"[SETUP] restored default playback device: {default_device_id}")
+            except Exception as e:
+                print(f"[SETUP] could not restore default device: {e}")
 
         print("[SETUP] setup complete")
         return {"success": True}
