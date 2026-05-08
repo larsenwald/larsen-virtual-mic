@@ -75,9 +75,11 @@ class AudioEngine:
             out_info  = sd.query_devices(self.output_device)
             in_rate   = int(in_info.get("default_samplerate",  44100))
             out_rate  = int(out_info.get("default_samplerate", 48000))
-            out_ch    = min(2, int(out_info.get("max_output_channels", 1)))
+            in_ch     = min(1, int(in_info.get("max_input_channels",  1)))
+            out_ch    = min(2, int(out_info.get("max_output_channels", 2)))
 
-            print(f"[AudioEngine] input rate={in_rate}  output rate={out_rate}")
+            print(f"[AudioEngine] input  device: idx={self.input_device} name={in_info['name']!r} rate={in_rate} ch={in_ch} hostapi={in_info['hostapi']}")
+            print(f"[AudioEngine] output device: idx={self.output_device} name={out_info['name']!r} rate={out_rate} ch={out_ch} hostapi={out_info['hostapi']}")
 
             # Shared buffer between the two streams
             self._buf = np.zeros(self.blocksize * 4, dtype=np.float32)
@@ -104,7 +106,7 @@ class AudioEngine:
                 device=self.input_device,
                 samplerate=in_rate,
                 blocksize=self.blocksize,
-                channels=1,
+                channels=in_ch,
                 dtype=np.float32,
                 callback=input_callback,
                 latency="low",
@@ -175,7 +177,7 @@ class AudioEngine:
                     return i
         return None
 
-    def _match_sd_index(self, friendly_name: str, is_output: bool) -> Optional[int]:
+    def _match_sd_index(self, friendly_name: str, is_output: bool, retry: bool = True) -> Optional[int]:
         """Match a Core Audio friendly name to a sounddevice index."""
         devices = sd.query_devices()
         hostapis = sd.query_hostapis()
@@ -189,6 +191,16 @@ class AudioEngine:
                 sd_name = d["name"].lower()
                 if sd_name in fn_lower or fn_lower in sd_name:
                     return i
+        if retry:
+            print(f"[MATCH] '{friendly_name}' not found, reloading PortAudio DLL...")
+            try:
+                sd._terminate()
+                sd._ffi.dlclose(sd._lib)
+                sd._lib = sd._ffi.dlopen(sd._libname)
+                sd._initialize()
+            except Exception as e:
+                print(f"[MATCH] DLL reload error: {e}")
+            return self._match_sd_index(friendly_name, is_output, retry=False)
         return None
 
     def get_mic_list(self) -> list[dict]:
@@ -422,12 +434,20 @@ class API:
     def get_mics(self):
         return engine.get_mic_list()
 
-    def set_mic(self, device_index: int):
+    def set_mic(self, device_name: str):
         engine.stop()
-        engine.input_device = int(device_index)
+        # Resolve output first — this may trigger a DLL reload on fresh install
         engine.output_device = engine.find_larsen_output()
         if engine.output_device is None:
             return {"success": False, "error": "VB-Audio output not found"}
+        # Re-fetch mic list after potential DLL reload (indices may have shifted)
+        mics = engine.get_mic_list()
+        matched = next((m for m in mics if m["name"] == device_name), None)
+        if matched is None:
+            print(f"[SET_MIC] '{device_name}' not found in mic list: {[m['name'] for m in mics]}")
+            return {"success": False, "error": f"Mic '{device_name}' not found"}
+        engine.input_device = matched["index"]
+        print(f"[SET_MIC] using input={engine.input_device} ({matched['name']}) output={engine.output_device}")
         ok = engine.start()
         return {"success": ok, "running": engine.running}
 

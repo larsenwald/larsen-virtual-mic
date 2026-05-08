@@ -837,13 +837,13 @@ async function loadMainScreen() {
   sel.innerHTML = '<option value="">— select microphone —</option>';
   mics.forEach(m => {
     const opt = document.createElement('option');
-    opt.value = m.index;
+    opt.value = m.name;
     opt.textContent = m.name;
     sel.appendChild(opt);
   });
   if (mics.length === 1) {
-    sel.value = mics[0].index;
-    await onMicChange(mics[0].index);
+    sel.value = mics[0].name;
+    await onMicChange(mics[0].name);
   }
   showScreen('main');
 }
@@ -857,10 +857,10 @@ function showError(msg) {
 //  Mic + engine
 // ════════════════════════════════════════
 
-async function onMicChange(deviceIndex) {
-  if (deviceIndex === '' || deviceIndex === undefined) return;
+async function onMicChange(deviceName) {
+  if (!deviceName) return;
   updateEngineStatus(null, 'starting…');
-  const result = await window.pywebview.api.set_mic(parseInt(deviceIndex));
+  const result = await window.pywebview.api.set_mic(deviceName);
   updateEngineStatus(result.success, result.success ? 'running' : (result.error || 'error'));
 }
 
