@@ -437,7 +437,7 @@
     background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: 5px;
-    cursor: grab;
+    cursor: default;
     transition: border-color 0.15s, box-shadow 0.15s;
     box-shadow: 0 4px 20px rgba(0,0,0,0.45);
     z-index: 2;
@@ -463,7 +463,7 @@
     align-items: center;
     padding: 0 8px 0 10px;
     gap: 6px;
-    cursor: grab;
+    cursor: default;
   }
   .plugin-node.expanded .plugin-header { border-bottom: 1px solid var(--border); }
 
@@ -1258,7 +1258,7 @@ function makeDraggable(el, id) {
       const dx = e2.clientX - startX;
       const dy = e2.clientY - startY;
       if (!dragged && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
-      if (!dragged) { dragged = true; el.classList.add('dragging'); }
+      if (!dragged) { dragged = true; el.classList.add('dragging'); deselectAll(); selectPlugin(id); document.body.style.cursor = 'grabbing'; }
 
       const elX = startElX + dx / cam.zoom;
       const elY = startElY + dy / cam.zoom;
@@ -1272,6 +1272,7 @@ function makeDraggable(el, id) {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       el.classList.remove('dragging');
+      document.body.style.cursor = '';
 
       if (dragged) {
         if (plugins[id])
