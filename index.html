@@ -386,6 +386,15 @@
   }
   .drag-ghost-line { width: 75%; height: 2px; background: var(--bg3); border-radius: 1px; }
 
+  /* Viewport — transformed for pan/zoom */
+  #viewport {
+    position: absolute;
+    top: 0; left: 0;
+    width: 0; height: 0;
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+
   /* Empty state */
   .canvas-empty {
     position: absolute;
@@ -686,7 +695,9 @@
         </svg>
         <div class="canvas-empty-text">Drag a plugin from the sidebar<br>to get started</div>
       </div>
-      <div id="plugin-container"></div>
+      <div id="viewport">
+        <div id="plugin-container"></div>
+      </div>
     </div>
 
   </div>
@@ -771,7 +782,7 @@ function bindTileDrag(tile, pt) {
       const rect = canvas.getBoundingClientRect();
       if (e2.clientX >= rect.left && e2.clientX <= rect.right &&
           e2.clientY >= rect.top  && e2.clientY <= rect.bottom) {
-        await spawnPlugin(activeDrag.type, e2.clientX - rect.left, e2.clientY - rect.top);
+        await spawnPlugin(activeDrag.type, e2.clientX, e2.clientY);
       }
       activeDrag = null;
     };
@@ -846,6 +857,7 @@ async function loadMainScreen() {
     await onMicChange(mics[0].name);
   }
   showScreen('main');
+  initCanvasInteraction();
 }
 
 function showError(msg) {
@@ -871,13 +883,86 @@ function updateEngineStatus(ok, label) {
 }
 
 // ════════════════════════════════════════
+//  Canvas pan / zoom state
+// ════════════════════════════════════════
+
+const cam = { x: 0, y: 0, zoom: 1 };
+const ZOOM_MIN = 0.25, ZOOM_MAX = 2;
+
+function applyTransform() {
+  document.getElementById('viewport').style.transform =
+    `translate(${cam.x}px, ${cam.y}px) scale(${cam.zoom})`;
+}
+
+function screenToWorld(sx, sy) {
+  const canvas = document.getElementById('canvas');
+  const cr = canvas.getBoundingClientRect();
+  return {
+    x: (sx - cr.left - cam.x) / cam.zoom,
+    y: (sy - cr.top  - cam.y) / cam.zoom,
+  };
+}
+
+function initCanvasInteraction() {
+  const canvas = document.getElementById('canvas');
+
+  // Middle-mouse or Space+drag to pan
+  let panning = false, panStart = null, camStart = null;
+  let spaceDown = false;
+
+  document.addEventListener('keydown', e => { if (e.code === 'Space') { spaceDown = true; canvas.style.cursor = 'grab'; } });
+  document.addEventListener('keyup',   e => { if (e.code === 'Space') { spaceDown = false; canvas.style.cursor = ''; } });
+
+  canvas.addEventListener('mousedown', e => {
+    if (e.button === 1 || (e.button === 0 && spaceDown)) {
+      e.preventDefault();
+      panning = true;
+      panStart = { x: e.clientX, y: e.clientY };
+      camStart = { x: cam.x, y: cam.y };
+      canvas.style.cursor = 'grabbing';
+    }
+  });
+  document.addEventListener('mousemove', e => {
+    if (!panning) return;
+    cam.x = camStart.x + (e.clientX - panStart.x);
+    cam.y = camStart.y + (e.clientY - panStart.y);
+    applyTransform();
+  });
+  document.addEventListener('mouseup', e => {
+    if (panning) { panning = false; canvas.style.cursor = spaceDown ? 'grab' : ''; }
+  });
+
+  // Scroll to zoom, two-finger swipe to pan (touchpad)
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (e.ctrlKey) {
+      // Pinch-to-zoom (touchpad) or ctrl+scroll
+      const delta = e.deltaY < 0 ? 1.08 : 0.92;
+      const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cam.zoom * delta));
+      const cr = canvas.getBoundingClientRect();
+      const mx = e.clientX - cr.left;
+      const my = e.clientY - cr.top;
+      cam.x = mx - (mx - cam.x) * (newZoom / cam.zoom);
+      cam.y = my - (my - cam.y) * (newZoom / cam.zoom);
+      cam.zoom = newZoom;
+    } else {
+      // Two-finger swipe (touchpad) or plain scroll → pan
+      cam.x -= e.deltaX;
+      cam.y -= e.deltaY;
+    }
+    applyTransform();
+  }, { passive: false });
+}
+
+// ════════════════════════════════════════
 //  Plugin spawning + rendering
 // ════════════════════════════════════════
 
 const plugins = {};
 
-async function spawnPlugin(type, x, y) {
-  const data = await window.pywebview.api.add_plugin(type, x, y);
+async function spawnPlugin(type, screenX, screenY) {
+  const w = screenToWorld(screenX, screenY);
+  const data = await window.pywebview.api.add_plugin(type, w.x, w.y);
   renderPlugin(data);
   updateOrderBadges();
   updateEmptyState();
@@ -1011,25 +1096,24 @@ function makeDraggable(el, id) {
     if (e.target.closest('.plugin-close') ||
         e.target.closest('.knob-ring')) return;
 
-    const canvas = document.getElementById('canvas');
-    const cr = canvas.getBoundingClientRect();
-    const er = el.getBoundingClientRect();
-    const ox = e.clientX - er.left;
-    const oy = e.clientY - er.top;
     const startX = e.clientX, startY = e.clientY;
+    // Capture world position of the element at drag start
+    const startWorldX = plugins[id].data.x;
+    const startWorldY = plugins[id].data.y;
     let dragged = false;
 
     const onMove = e2 => {
-      if (Math.abs(e2.clientX - startX) < 4 && Math.abs(e2.clientY - startY) < 4) return;
-      if (!dragged) {
-        dragged = true;
-        el.classList.add('dragging');
-      }
-      const x = e2.clientX - cr.left - ox;
-      const y = e2.clientY - cr.top  - oy;
-      el.style.left = x + 'px';
-      el.style.top  = y + 'px';
-      if (plugins[id]) { plugins[id].data.x = x + 80; plugins[id].data.y = y + 15; }
+      const dx = e2.clientX - startX;
+      const dy = e2.clientY - startY;
+      if (!dragged && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+      if (!dragged) { dragged = true; el.classList.add('dragging'); }
+
+      // Convert screen delta to world delta
+      const worldX = startWorldX + dx / cam.zoom;
+      const worldY = startWorldY + dy / cam.zoom;
+      el.style.left = (worldX - 80) + 'px';
+      el.style.top  = (worldY - 15) + 'px';
+      if (plugins[id]) { plugins[id].data.x = worldX; plugins[id].data.y = worldY; }
       updateOrderBadges();
     };
 
@@ -1038,11 +1122,9 @@ function makeDraggable(el, id) {
       document.removeEventListener('mouseup', onUp);
       el.classList.remove('dragging');
       if (dragged) {
-        // Was a drag — persist position, do NOT toggle
         if (plugins[id])
           await window.pywebview.api.update_plugin_position(id, plugins[id].data.x, plugins[id].data.y);
       } else {
-        // Was a click — toggle expand only if not on close button
         if (!e2.target.closest('.plugin-close')) togglePlugin(id);
       }
     };
