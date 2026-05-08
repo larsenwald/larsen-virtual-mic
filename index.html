@@ -1246,8 +1246,8 @@ function makeDraggable(el, id) {
         e.target.closest('.knob-ring')) return;
 
     const startX = e.clientX, startY = e.clientY;
-    const startWorldX = plugins[id].data.x;
-    const startWorldY = plugins[id].data.y;
+    const startElX = parseFloat(el.style.left) || 0;
+    const startElY = parseFloat(el.style.top)  || 0;
     let dragged = false;
 
     const onMove = e2 => {
@@ -1256,11 +1256,11 @@ function makeDraggable(el, id) {
       if (!dragged && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
       if (!dragged) { dragged = true; el.classList.add('dragging'); }
 
-      const worldX = startWorldX + dx / cam.zoom;
-      const worldY = startWorldY + dy / cam.zoom;
-      el.style.left = (worldX - 80) + 'px';
-      el.style.top  = (worldY - 15) + 'px';
-      if (plugins[id]) { plugins[id].data.x = worldX; plugins[id].data.y = worldY; }
+      const elX = startElX + dx / cam.zoom;
+      const elY = startElY + dy / cam.zoom;
+      el.style.left = elX + 'px';
+      el.style.top  = elY + 'px';
+      if (plugins[id]) { plugins[id].data.x = elX + 80; plugins[id].data.y = elY + 15; }
       requestAnimationFrame(updateArrows);
     };
 
