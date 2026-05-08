@@ -75,8 +75,42 @@ Set-ItemProperty -Path "$($capture.PSPath)\Properties" `
 Set-ItemProperty -Path "$($capture.PSPath)\Properties" `
     -Name "{b3f8fa53-0004-438e-9003-51a46e139bfc},6" -Value "Virtual Mic"
 
+# ---- CAPTURE CURRENT DEFAULT PLAYBACK DEVICE BEFORE RESTART ----
+# Windows picks the default device by the latest Role:0/1/2 timestamp.
+# We find which non-VB-Audio render device has the most recent Role:0 timestamp,
+# save its GUID, then after restarting Audiosrv we write a fresh timestamp to it
+# so Windows selects it again instead of our newly installed VB-Audio device.
+
+$defaultGuid = $null
+$latestTime = [DateTime]::MinValue
+
+Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render" | ForEach-Object {
+    try {
+        $props = Get-ItemProperty "$($_.PSPath)\Properties" -ErrorAction SilentlyContinue
+        $devName = $props."{b3f8fa53-0004-438e-9003-51a46e139bfc},6"
+        # Skip VB-Audio / CABLE devices
+        if ($devName -like "*VB-Audio*" -or $devName -like "*CABLE*" -or $devName -like "*Larsenwald*") { return }
+
+        $roleVal = (Get-ItemProperty -Path $_.PSPath -Name "Role:0" -ErrorAction SilentlyContinue)."Role:0"
+        if ($roleVal -and $roleVal.Length -ge 16) {
+            $year  = [BitConverter]::ToUInt16($roleVal, 0)
+            $month = [BitConverter]::ToUInt16($roleVal, 2)
+            $day   = [BitConverter]::ToUInt16($roleVal, 6)
+            $hour  = [BitConverter]::ToUInt16($roleVal, 8)
+            $min   = [BitConverter]::ToUInt16($roleVal, 10)
+            $sec   = [BitConverter]::ToUInt16($roleVal, 12)
+            if ($year -gt 2000) {
+                $ts = New-Object DateTime($year, $month, $day, $hour, $min, $sec)
+                if ($ts -gt $latestTime) {
+                    $latestTime = $ts
+                    $defaultGuid = $_.PSChildName
+                }
+            }
+        }
+    } catch {}
+}
+
 # ---- DISABLE CABLE INPUT RENDER DEVICE ----
-# Also used to restore default playback device after audio service restart
 
 $code = @"
 using System;
@@ -95,7 +129,7 @@ interface IPolicyConfig {
     void SetShareMode();
     void GetPropertyValue();
     void SetPropertyValue();
-    [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string devId, uint role);
+    void SetDefaultEndpoint();
     [PreserveSig] int SetEndpointVisibility([MarshalAs(UnmanagedType.LPWStr)] string devId, bool visible);
 }
 
@@ -109,35 +143,9 @@ public class AudioPolicy {
         var pc = (IPolicyConfig)new PolicyConfigClient();
         Marshal.ThrowExceptionForHR(pc.SetEndpointVisibility(deviceId, visible));
     }
-    public static void SetDefault(string deviceId) {
-        var pc = (IPolicyConfig)new PolicyConfigClient();
-        // Roles: 0 = Console, 1 = Multimedia, 2 = Communications
-        pc.SetDefaultEndpoint(deviceId, 0);
-        pc.SetDefaultEndpoint(deviceId, 1);
-        pc.SetDefaultEndpoint(deviceId, 2);
-    }
 }
 "@
 Add-Type -TypeDefinition $code
-
-# ---- READ CURRENT DEFAULT PLAYBACK DEVICE BEFORE RESTART ----
-# The default render device GUID is flagged in the registry under each device's key
-$defaultDeviceId = $null
-$renderRoot = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render"
-Get-ChildItem $renderRoot | ForEach-Object {
-    try {
-        # Default devices have Level:0 = 0 (or higher) stored under their key directly
-        $val = Get-ItemProperty -Path $_.PSPath -Name "Level:0" -ErrorAction SilentlyContinue
-        if ($val -and $val."Level:0" -ge 0) {
-            # Exclude our VB-Audio device from being saved as the default to restore
-            $props = Get-ItemProperty "$($_.PSPath)\Properties" -ErrorAction SilentlyContinue
-            $devName = $props."{b3f8fa53-0004-438e-9003-51a46e139bfc},6"
-            if ($devName -notlike "*VB-Audio*" -and $devName -notlike "*CABLE*") {
-                $defaultDeviceId = "{0.0.0.00000000}.$($_.PSChildName)"
-            }
-        }
-    } catch {}
-}
 
 if ($cableInput) {
     [AudioPolicy]::SetVisibility("{0.0.0.00000000}.$($cableInput.PSChildName)", $false)
@@ -145,12 +153,33 @@ if ($cableInput) {
 
 # ---- RESTART AUDIO SERVICE ----
 Restart-Service -Name Audiosrv -Force
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 3
 
 # ---- RESTORE DEFAULT PLAYBACK DEVICE ----
-if ($defaultDeviceId) {
+# Write a fresh timestamp (now) to Role:0, Role:1, Role:2 on the saved device.
+# Audiosrv will pick the device with the latest timestamp as default.
+if ($defaultGuid) {
     try {
-        [AudioPolicy]::SetDefault($defaultDeviceId)
+        $regPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\$defaultGuid"
+
+        # Build SYSTEMTIME bytes for right now (UTC)
+        $now = [DateTime]::UtcNow
+        $bytes = New-Object byte[] 16
+        [BitConverter]::GetBytes([uint16]$now.Year).CopyTo($bytes, 0)
+        [BitConverter]::GetBytes([uint16]$now.Month).CopyTo($bytes, 2)
+        [BitConverter]::GetBytes([uint16]$now.DayOfWeek).CopyTo($bytes, 4)
+        [BitConverter]::GetBytes([uint16]$now.Day).CopyTo($bytes, 6)
+        [BitConverter]::GetBytes([uint16]$now.Hour).CopyTo($bytes, 8)
+        [BitConverter]::GetBytes([uint16]$now.Minute).CopyTo($bytes, 10)
+        [BitConverter]::GetBytes([uint16]$now.Second).CopyTo($bytes, 12)
+        [BitConverter]::GetBytes([uint16]$now.Millisecond).CopyTo($bytes, 14)
+
+        Set-ItemProperty -Path $regPath -Name "Role:0" -Value $bytes -Type Binary
+        Set-ItemProperty -Path $regPath -Name "Role:1" -Value $bytes -Type Binary
+        Set-ItemProperty -Path $regPath -Name "Role:2" -Value $bytes -Type Binary
+
+        # Nudge Audiosrv to re-read by briefly restarting again
+        Restart-Service -Name Audiosrv -Force
     } catch {}
 }
 

@@ -153,7 +153,15 @@ def run_configure_as_system() -> tuple[bool, str]:
 $a = New-ScheduledTaskAction -Execute "powershell" -Argument "-ExecutionPolicy Bypass -File `"{script_path}`""
 Register-ScheduledTask -TaskName "LarsenConfigure" -Action $a -Principal (New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest) -Force | Out-Null
 Start-ScheduledTask -TaskName "LarsenConfigure"
-Start-Sleep 15
+
+# Poll until task finishes instead of fixed sleep
+$deadline = (Get-Date).AddSeconds(60)
+while ((Get-Date) -lt $deadline) {{
+    $state = (Get-ScheduledTask -TaskName "LarsenConfigure").State
+    if ($state -eq "Ready") {{ break }}
+    Start-Sleep -Milliseconds 500
+}}
+
 Unregister-ScheduledTask -TaskName "LarsenConfigure" -Confirm:$false
 Write-Output "WRAPPER_DONE"
 """
@@ -265,13 +273,17 @@ class API:
         return {"success": True}
 
     def wait_for_devices(self):
-        """Poll until our renamed devices appear in sounddevice. Times out after 20s."""
-        deadline = time.time() + 20
+        """Poll until our renamed devices appear in sounddevice. Times out after 40s."""
+        time.sleep(3)  # give Audiosrv a moment to fully restart first
+        deadline = time.time() + 40
         while time.time() < deadline:
-            out = engine.find_larsen_output()
-            mics = engine.get_mic_list()
-            if out is not None and len(mics) > 0:
-                return {"ready": True}
+            try:
+                out = engine.find_larsen_output()
+                mics = engine.get_mic_list()
+                if out is not None and len(mics) > 0:
+                    return {"ready": True}
+            except Exception:
+                pass
             time.sleep(1)
         return {"ready": False}
 
