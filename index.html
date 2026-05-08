@@ -994,25 +994,8 @@ function initCanvasInteraction() {
       rectEl.style.top    = y + 'px';
       rectEl.style.width  = w + 'px';
       rectEl.style.height = h + 'px';
-    };
 
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-      rectEl.style.display = 'none';
-
-      if (!selecting) {
-        // Plain click on empty canvas → deselect all
-        deselectAll();
-        return;
-      }
-
-      // Select plugins whose header center falls within rect
-      const rx = parseFloat(rectEl.style.left);
-      const ry = parseFloat(rectEl.style.top);
-      const rw = parseFloat(rectEl.style.width);
-      const rh = parseFloat(rectEl.style.height);
-
+      // Live highlight — update selection on every move
       deselectAll();
       Object.values(plugins).forEach(p => {
         const header = document.querySelector(`#plugin-${p.data.id} .plugin-header`);
@@ -1020,10 +1003,17 @@ function initCanvasInteraction() {
         const hr = header.getBoundingClientRect();
         const hcx = hr.left + hr.width  / 2 - cr.left;
         const hcy = hr.top  + hr.height / 2 - cr.top;
-        if (hcx >= rx && hcx <= rx + rw && hcy >= ry && hcy <= ry + rh) {
+        if (hcx >= x && hcx <= x + w && hcy >= y && hcy <= y + h) {
           selectPlugin(p.data.id);
         }
       });
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      rectEl.style.display = 'none';
+      if (!selecting) deselectAll();
     };
 
     document.addEventListener('mousemove', onMove);
@@ -1271,21 +1261,22 @@ function makeDraggable(el, id) {
         if (plugins[id])
           await window.pywebview.api.update_plugin_position(id, plugins[id].data.x, plugins[id].data.y);
       } else {
-        // Click — handle select / expand
         if (e2.target.closest('.plugin-close')) return;
-        if (selected.has(id)) {
-          // Already selected → toggle expand
-          togglePlugin(id);
-        } else {
-          // Not selected → select it, deselect others
-          deselectAll();
-          selectPlugin(id);
-        }
+        // Single click → select only
+        deselectAll();
+        selectPlugin(id);
       }
     };
 
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
+  });
+
+  // Double-click to expand/collapse
+  el.addEventListener('dblclick', e => {
+    if (e.target.closest('.plugin-close') || e.target.closest('.knob-ring')) return;
+    e.stopPropagation();
+    togglePlugin(id);
   });
 }
 
