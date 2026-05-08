@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Larsen VM</title>
+<title>Larsenwald Virtual Mic</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
 
@@ -546,7 +546,7 @@
 ══════════════════════════════════════ -->
 <div id="screen-checking" class="screen active">
   <div class="setup-card">
-    <div class="setup-logo">Larsen VM <span>// startup</span></div>
+    <div class="setup-logo">Larsenwald Virtual Mic <span>// startup</span></div>
     <div class="setup-title">Checking dependencies…</div>
     <div class="setup-body">Scanning for VB-Audio Virtual Cable driver.</div>
     <div class="progress-wrap visible">
@@ -564,12 +564,12 @@
 ══════════════════════════════════════ -->
 <div id="screen-consent-fresh" class="screen">
   <div class="setup-card">
-    <div class="setup-logo">Larsen VM <span>// setup required</span></div>
+    <div class="setup-logo">Larsenwald Virtual Mic <span>// setup required</span></div>
     <div class="setup-title">VB-Audio Virtual Cable is required</div>
     <div class="setup-body">
-      Larsen VM routes your microphone through a DSP plugin chain and outputs to a virtual mic device that other apps can use.<br><br>
+      Larsenwald Virtual Mic routes your microphone through a DSP plugin chain and outputs to a virtual mic device that other apps can use.<br><br>
       To do this, it needs to install <strong>VB-Audio Virtual Cable</strong> — a free, widely-used audio driver — on your system.<br><br>
-      The driver will be renamed to <span class="device-name">Larsen VM</span> and <span class="device-name">Larsen (Virtual Mic)</span> and configured exclusively for this app.
+      The driver will be renamed to <span class="device-name">Larsenwald VM (Don't Touch)</span> and <span class="device-name">Larsenwald (Virtual Mic)</span> and configured exclusively for this app.
     </div>
     <div class="setup-actions">
       <button class="btn btn-primary" onclick="consentAndInstall()">Install &amp; continue</button>
@@ -583,11 +583,11 @@
 ══════════════════════════════════════ -->
 <div id="screen-consent-hijack" class="screen">
   <div class="setup-card">
-    <div class="setup-logo">Larsen VM <span>// driver conflict</span></div>
+    <div class="setup-logo">Larsenwald Virtual Mic <span>// driver conflict</span></div>
     <div class="setup-title">VB-Audio Virtual Cable is already installed</div>
     <div class="setup-body">
-      Larsen VM found an existing VB-Audio Virtual Cable installation on your system.<br><br>
-      <span class="warn">⚠ This app will take full ownership of that driver.</span> It will be uninstalled and reinstalled fresh, then renamed and reconfigured exclusively for Larsen VM.<br><br>
+      Larsenwald Virtual Mic found an existing VB-Audio Virtual Cable installation on your system.<br><br>
+      <span class="warn">⚠ This app will take full ownership of that driver.</span> It will be uninstalled and reinstalled fresh, then renamed and reconfigured exclusively for Larsenwald Virtual Mic.<br><br>
       <strong>If you're currently using VB-Audio for anything else</strong> — another app, your own routing setup — that configuration will be permanently overwritten.<br><br>
       If that's not okay, do not continue.
     </div>
@@ -603,7 +603,7 @@
 ══════════════════════════════════════ -->
 <div id="screen-installing" class="screen">
   <div class="setup-card">
-    <div class="setup-logo">Larsen VM <span>// installing</span></div>
+    <div class="setup-logo">Larsenwald Virtual Mic <span>// installing</span></div>
     <div class="setup-title">Setting up audio driver…</div>
     <div class="setup-body">This will take a moment. Do not close the app.</div>
     <div class="progress-wrap visible">
@@ -621,7 +621,7 @@
 ══════════════════════════════════════ -->
 <div id="screen-waiting" class="screen">
   <div class="setup-card">
-    <div class="setup-logo">Larsen VM <span>// initializing</span></div>
+    <div class="setup-logo">Larsenwald Virtual Mic <span>// initializing</span></div>
     <div class="setup-title">Waiting for audio devices…</div>
     <div class="setup-body">Driver installed and configured. Waiting for Windows to register the new devices.</div>
     <div class="progress-wrap visible">
@@ -639,7 +639,7 @@
 ══════════════════════════════════════ -->
 <div id="screen-error" class="screen">
   <div class="setup-card">
-    <div class="setup-logo">Larsen VM <span>// error</span></div>
+    <div class="setup-logo">Larsenwald Virtual Mic <span>// error</span></div>
     <div class="setup-title">Setup failed</div>
     <div class="setup-body" id="error-body">An unexpected error occurred during setup.</div>
     <div class="setup-actions">
@@ -654,7 +654,7 @@
 <div id="screen-main" class="screen">
 
   <div class="topbar">
-    <div class="topbar-logo">Larsen VM</div>
+    <div class="topbar-logo">Larsenwald Virtual Mic</div>
     <span class="topbar-label">Input</span>
     <select class="mic-select" id="mic-select" onchange="onMicChange(this.value)">
       <option value="">— select microphone —</option>

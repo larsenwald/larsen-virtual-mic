@@ -62,22 +62,23 @@ foreach ($path in $paths) {
 }
 
 # ---- RENAME RENDER DEVICE ----
-# Displays as: "Larsen VM (Don't Touch)"
+# Displays as: "Larsenwald VM (Don't Touch)"
 Set-ItemProperty -Path "$($render.PSPath)\Properties" `
-    -Name "{a45c254e-df1c-4efd-8020-67d146a850e0},2" -Value "Larsen VM"
+    -Name "{a45c254e-df1c-4efd-8020-67d146a850e0},2" -Value "Larsenwald VM"
 Set-ItemProperty -Path "$($render.PSPath)\Properties" `
     -Name "{b3f8fa53-0004-438e-9003-51a46e139bfc},6" -Value "Don't Touch"
 
 # ---- RENAME CAPTURE DEVICE ----
-# Displays as: "Larsen (Virtual Mic)"
+# Displays as: "Larsenwald (Virtual Mic)"
 Set-ItemProperty -Path "$($capture.PSPath)\Properties" `
-    -Name "{a45c254e-df1c-4efd-8020-67d146a850e0},2" -Value "Larsen"
+    -Name "{a45c254e-df1c-4efd-8020-67d146a850e0},2" -Value "Larsenwald"
 Set-ItemProperty -Path "$($capture.PSPath)\Properties" `
     -Name "{b3f8fa53-0004-438e-9003-51a46e139bfc},6" -Value "Virtual Mic"
 
 # ---- DISABLE CABLE INPUT RENDER DEVICE ----
-if ($cableInput) {
-    $code = @"
+# Also used to restore default playback device after audio service restart
+
+$code = @"
 using System;
 using System.Runtime.InteropServices;
 
@@ -94,7 +95,7 @@ interface IPolicyConfig {
     void SetShareMode();
     void GetPropertyValue();
     void SetPropertyValue();
-    void SetDefaultEndpoint();
+    [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string devId, uint role);
     [PreserveSig] int SetEndpointVisibility([MarshalAs(UnmanagedType.LPWStr)] string devId, bool visible);
 }
 
@@ -108,13 +109,49 @@ public class AudioPolicy {
         var pc = (IPolicyConfig)new PolicyConfigClient();
         Marshal.ThrowExceptionForHR(pc.SetEndpointVisibility(deviceId, visible));
     }
+    public static void SetDefault(string deviceId) {
+        var pc = (IPolicyConfig)new PolicyConfigClient();
+        // Roles: 0 = Console, 1 = Multimedia, 2 = Communications
+        pc.SetDefaultEndpoint(deviceId, 0);
+        pc.SetDefaultEndpoint(deviceId, 1);
+        pc.SetDefaultEndpoint(deviceId, 2);
+    }
 }
 "@
-    Add-Type -TypeDefinition $code
+Add-Type -TypeDefinition $code
+
+# ---- READ CURRENT DEFAULT PLAYBACK DEVICE BEFORE RESTART ----
+# The default render device GUID is flagged in the registry under each device's key
+$defaultDeviceId = $null
+$renderRoot = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render"
+Get-ChildItem $renderRoot | ForEach-Object {
+    try {
+        # Default devices have Level:0 = 0 (or higher) stored under their key directly
+        $val = Get-ItemProperty -Path $_.PSPath -Name "Level:0" -ErrorAction SilentlyContinue
+        if ($val -and $val."Level:0" -ge 0) {
+            # Exclude our VB-Audio device from being saved as the default to restore
+            $props = Get-ItemProperty "$($_.PSPath)\Properties" -ErrorAction SilentlyContinue
+            $devName = $props."{b3f8fa53-0004-438e-9003-51a46e139bfc},6"
+            if ($devName -notlike "*VB-Audio*" -and $devName -notlike "*CABLE*") {
+                $defaultDeviceId = "{0.0.0.00000000}.$($_.PSChildName)"
+            }
+        }
+    } catch {}
+}
+
+if ($cableInput) {
     [AudioPolicy]::SetVisibility("{0.0.0.00000000}.$($cableInput.PSChildName)", $false)
 }
 
 # ---- RESTART AUDIO SERVICE ----
 Restart-Service -Name Audiosrv -Force
+Start-Sleep -Seconds 2
+
+# ---- RESTORE DEFAULT PLAYBACK DEVICE ----
+if ($defaultDeviceId) {
+    try {
+        [AudioPolicy]::SetDefault($defaultDeviceId)
+    } catch {}
+}
 
 Write-Output "CONFIGURE_DONE"

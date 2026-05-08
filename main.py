@@ -110,7 +110,7 @@ class AudioEngine:
         for i, d in enumerate(devices):
             if d["max_output_channels"] > 0 and d["hostapi"] == wasapi_index:
                 name = d["name"].lower()
-                if "larsen vm" in name or "cable input" in name:
+                if "larsenwald vm" in name or "cable input" in name:
                     return i
         return None
 
@@ -128,7 +128,7 @@ class AudioEngine:
         for i, d in enumerate(devices):
             if d["max_input_channels"] > 0 and d["hostapi"] == wasapi_index:
                 name = d["name"].lower()
-                skip = any(k in name for k in ["vb-audio", "cable output", "larsen", "virtual mic"])
+                skip = any(k in name for k in ["vb-audio", "cable output", "larsenwald", "virtual mic"])
                 if not skip:
                     mics.append({"index": i, "name": d["name"]})
         return mics
@@ -205,9 +205,9 @@ def check_vbaudio_state() -> dict:
                         pass
                     winreg.CloseKey(props_key)
 
-                    if "vb-audio" in inside.lower() or "cable" in before.lower() or "cable" in inside.lower():
+                    if "vb-audio" in inside.lower() or "cable" in before.lower() or "cable" in inside.lower() or "larsenwald" in before.lower():
                         found_vbaudio = True
-                    if "larsen" in before.lower():
+                    if "larsenwald" in before.lower():
                         found_ours = True
                 except Exception:
                     pass
@@ -352,7 +352,7 @@ if __name__ == "__main__":
     api = API()
     index_path = os.path.join(BASE_DIR, "index.html")
     window = webview.create_window(
-        title="Larsen VM",
+        title="Larsenwald Virtual Mic",
         url=f"file://{index_path}",
         js_api=api,
         width=1100,
