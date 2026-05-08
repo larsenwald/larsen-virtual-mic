@@ -824,7 +824,7 @@ async function consentAndInstall() {
   showScreen('waiting');
   const devResult = await window.pywebview.api.wait_for_devices();
   if (!devResult.ready) {
-    showError('Audio devices did not appear after setup. Try restarting the app.');
+    showError('Setup completed but devices took too long to register. Please restart the app.');
     return;
   }
   await loadMainScreen();

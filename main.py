@@ -71,19 +71,57 @@ class AudioEngine:
         if self.input_device is None or self.output_device is None:
             return False
         try:
-            out_info = sd.query_devices(self.output_device)
-            out_ch = min(2, int(out_info.get("max_output_channels", 1)))
-            self.stream = sd.Stream(
-                device=(self.input_device, self.output_device),
-                samplerate=self.samplerate,
+            in_info   = sd.query_devices(self.input_device)
+            out_info  = sd.query_devices(self.output_device)
+            in_rate   = int(in_info.get("default_samplerate",  44100))
+            out_rate  = int(out_info.get("default_samplerate", 48000))
+            out_ch    = min(2, int(out_info.get("max_output_channels", 1)))
+
+            print(f"[AudioEngine] input rate={in_rate}  output rate={out_rate}")
+
+            # Shared buffer between the two streams
+            self._buf = np.zeros(self.blocksize * 4, dtype=np.float32)
+            self._buf_lock = threading.Lock()
+
+            def input_callback(indata, frames, time_info, status):
+                audio = indata[:, 0].copy()
+                with self.lock:
+                    for plugin in self.sorted_plugins():
+                        audio = plugin.process(audio)
+                with self._buf_lock:
+                    n = min(len(audio), len(self._buf))
+                    self._buf = np.roll(self._buf, -n)
+                    self._buf[-n:] = audio[:n]
+
+            def output_callback(outdata, frames, time_info, status):
+                with self._buf_lock:
+                    out = self._buf[-frames:].copy()
+                outdata[:, 0] = out
+                if outdata.shape[1] > 1:
+                    outdata[:, 1] = out
+
+            self._in_stream = sd.InputStream(
+                device=self.input_device,
+                samplerate=in_rate,
                 blocksize=self.blocksize,
-                channels=(1, out_ch),
+                channels=1,
                 dtype=np.float32,
-                callback=self.audio_callback,
+                callback=input_callback,
                 latency="low",
             )
-            self.stream.start()
+            self._out_stream = sd.OutputStream(
+                device=self.output_device,
+                samplerate=out_rate,
+                blocksize=self.blocksize,
+                channels=out_ch,
+                dtype=np.float32,
+                callback=output_callback,
+                latency="low",
+            )
+            self._in_stream.start()
+            self._out_stream.start()
             self.running = True
+            print(f"[AudioEngine] started — in@{in_rate}Hz out@{out_rate}Hz")
             return True
         except Exception as e:
             print(f"[AudioEngine] start error: {e}")
@@ -91,21 +129,44 @@ class AudioEngine:
             return False
 
     def stop(self):
-        if self.stream:
-            try:
-                self.stream.stop()
-                self.stream.close()
-            except Exception:
-                pass
-            self.stream = None
+        for attr in ("_in_stream", "_out_stream", "stream"):
+            s = getattr(self, attr, None)
+            if s:
+                try:
+                    s.stop()
+                    s.close()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        self.stream = None
         self.running = False
 
     def find_larsen_output(self) -> Optional[int]:
+        """Find VB-Audio output via live Core Audio enumeration, then match to sd index."""
+        try:
+            import warnings
+            from pycaw.pycaw import AudioUtilities
+            from pycaw.constants import DEVICE_STATE, EDataFlow
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                render_devs = AudioUtilities.GetAllDevices(
+                    data_flow=EDataFlow.eRender.value,
+                    device_state=DEVICE_STATE.ACTIVE.value
+                )
+            print(f"[FIND_OUTPUT] live render devices: {[d.FriendlyName for d in render_devs]}")
+            for d in render_devs:
+                name = d.FriendlyName.lower()
+                if "larsenwald vm" in name or "cable input" in name:
+                    idx = self._match_sd_index(d.FriendlyName, is_output=True)
+                    print(f"[FIND_OUTPUT] matched '{d.FriendlyName}' → sd_index={idx}")
+                    return idx
+        except Exception as e:
+            print(f"[FIND_OUTPUT] pycaw error, falling back: {e}")
+        # Fallback to plain sounddevice
         devices = sd.query_devices()
         hostapis = sd.query_hostapis()
         wasapi_index = next(
-            (i for i, h in enumerate(hostapis) if "wasapi" in h["name"].lower()),
-            None
+            (i for i, h in enumerate(hostapis) if "wasapi" in h["name"].lower()), None
         )
         for i, d in enumerate(devices):
             if d["max_output_channels"] > 0 and d["hostapi"] == wasapi_index:
@@ -114,16 +175,51 @@ class AudioEngine:
                     return i
         return None
 
-    def get_mic_list(self) -> list[dict]:
+    def _match_sd_index(self, friendly_name: str, is_output: bool) -> Optional[int]:
+        """Match a Core Audio friendly name to a sounddevice index."""
         devices = sd.query_devices()
         hostapis = sd.query_hostapis()
-
-        # Find the WASAPI host API index
         wasapi_index = next(
-            (i for i, h in enumerate(hostapis) if "wasapi" in h["name"].lower()),
-            None
+            (i for i, h in enumerate(hostapis) if "wasapi" in h["name"].lower()), None
         )
+        ch_key = "max_output_channels" if is_output else "max_input_channels"
+        fn_lower = friendly_name.lower()
+        for i, d in enumerate(devices):
+            if d[ch_key] > 0 and d["hostapi"] == wasapi_index:
+                sd_name = d["name"].lower()
+                if sd_name in fn_lower or fn_lower in sd_name:
+                    return i
+        return None
 
+    def get_mic_list(self) -> list[dict]:
+        """List capture devices via live Core Audio enumeration."""
+        try:
+            import warnings
+            from pycaw.pycaw import AudioUtilities
+            from pycaw.constants import DEVICE_STATE, EDataFlow
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                capture_devs = AudioUtilities.GetAllDevices(
+                    data_flow=EDataFlow.eCapture.value,
+                    device_state=DEVICE_STATE.ACTIVE.value
+                )
+            print(f"[MIC_LIST] live capture devices: {[d.FriendlyName for d in capture_devs]}")
+            mics = []
+            for d in capture_devs:
+                name = d.FriendlyName.lower()
+                skip = any(k in name for k in ["vb-audio", "cable output", "larsenwald", "virtual mic"])
+                if not skip:
+                    idx = self._match_sd_index(d.FriendlyName, is_output=False)
+                    mics.append({"index": idx, "name": d.FriendlyName})
+            return mics
+        except Exception as e:
+            print(f"[MIC_LIST] pycaw error, falling back: {e}")
+        # Fallback
+        devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+        wasapi_index = next(
+            (i for i, h in enumerate(hostapis) if "wasapi" in h["name"].lower()), None
+        )
         mics = []
         for i, d in enumerate(devices):
             if d["max_input_channels"] > 0 and d["hostapi"] == wasapi_index:
@@ -140,14 +236,19 @@ class AudioEngine:
 
 def run_powershell(script_path: str, args: list[str] = []) -> tuple[bool, str]:
     cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path] + args
+    print(f"[PS] running: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     output = result.stdout + result.stderr
+    print(f"[PS] exit code: {result.returncode}")
+    print(f"[PS] output:\n{output.strip()}")
     return result.returncode == 0, output
 
 def run_configure_as_system() -> tuple[bool, str]:
     """Run configure_audio.ps1 as SYSTEM using the scheduled task trick."""
     script_path = os.path.join(SCRIPTS_DIR, "configure_audio.ps1")
     tmp = os.path.join(os.environ.get("TEMP", "C:\\Temp"), "larsen_configure.ps1")
+    print(f"[CONFIGURE] script path: {script_path}")
+    print(f"[CONFIGURE] wrapper tmp: {tmp}")
 
     wrapper = f"""
 $a = New-ScheduledTaskAction -Execute "powershell" -Argument "-ExecutionPolicy Bypass -File `"{script_path}`""
@@ -168,6 +269,7 @@ Write-Output "WRAPPER_DONE"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(wrapper)
 
+    print(f"[CONFIGURE] starting wrapper...")
     result = subprocess.run(
         ["powershell", "-ExecutionPolicy", "Bypass", "-File", tmp],
         capture_output=True, text=True
@@ -178,15 +280,20 @@ Write-Output "WRAPPER_DONE"
         pass
 
     output = result.stdout + result.stderr
-    return "WRAPPER_DONE" in output, output
+    print(f"[CONFIGURE] wrapper exit code: {result.returncode}")
+    print(f"[CONFIGURE] wrapper output:\n{output.strip()}")
+    success = "WRAPPER_DONE" in output
+    print(f"[CONFIGURE] success: {success}")
+    return success, output
 
 def check_vbaudio_state() -> dict:
     """
     Returns:
       { "installed": bool, "ours": bool }
     installed = VB-Audio driver is present at all
-    ours      = devices are already renamed to our names (Larsen VM / Larsen Virtual Mic)
+    ours      = devices are already renamed to our names (Larsenwald VM / Larsenwald Virtual Mic)
     """
+    print("[CHECK] scanning registry for VB-Audio state...")
     try:
         import winreg
         result = {"installed": False, "ours": False}
@@ -200,7 +307,6 @@ def check_vbaudio_state() -> dict:
                 sub_name = winreg.EnumKey(key, i)
                 try:
                     props_key = winreg.OpenKey(key, f"{sub_name}\\Properties")
-                    # Read friendly name fields
                     before = ""
                     inside = ""
                     try:
@@ -213,12 +319,14 @@ def check_vbaudio_state() -> dict:
                         pass
                     winreg.CloseKey(props_key)
 
+                    print(f"[CHECK]   device: before='{before}' inside='{inside}'")
+
                     if "vb-audio" in inside.lower() or "cable" in before.lower() or "cable" in inside.lower() or "larsenwald" in before.lower():
                         found_vbaudio = True
                     if "larsenwald" in before.lower():
                         found_ours = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[CHECK]   error reading device: {e}")
             winreg.CloseKey(key)
             return found_vbaudio, found_ours
 
@@ -231,10 +339,11 @@ def check_vbaudio_state() -> dict:
 
         result["installed"] = render_vb or capture_vb
         result["ours"] = render_ours and capture_ours
+        print(f"[CHECK] result: {result}")
         return result
 
     except Exception as e:
-        print(f"[check_vbaudio_state] error: {e}")
+        print(f"[CHECK] error: {e}")
         return {"installed": False, "ours": False}
 
 
@@ -253,38 +362,46 @@ class API:
 
     def run_setup(self):
         """Install VB-Audio + configure devices. Called after user consent."""
-        # Step 1: Install
+        print("[SETUP] starting install...")
         install_script = os.path.join(SCRIPTS_DIR, "install_vbaudio.ps1")
         ok, out = run_powershell(install_script, ["-DriversPath", DRIVERS_DIR])
         if not ok:
+            print("[SETUP] install FAILED")
             return {"success": False, "error": f"Install failed: {out}"}
 
-        # Step 2: Wait a moment for devices to register
+        print("[SETUP] install done, sleeping 3s...")
         time.sleep(3)
 
-        # Step 3: Configure (rename + disable) as SYSTEM
+        print("[SETUP] running configure as SYSTEM...")
         ok, out = run_configure_as_system()
         if not ok:
+            print("[SETUP] configure FAILED")
             return {"success": False, "error": f"Configure failed: {out}"}
 
-        # Step 4: Wait for audio service to settle
+        print("[SETUP] configure done, sleeping 3s...")
         time.sleep(3)
 
+        # Reinitialize PortAudio once so sounddevice sees the new driver
+        print("[SETUP] reinitializing PortAudio...")
+        sd._terminate()
+        sd._initialize()
+
+        print("[SETUP] setup complete")
         return {"success": True}
 
     def wait_for_devices(self):
-        """Poll until our renamed devices appear in sounddevice. Times out after 40s."""
-        time.sleep(3)  # give Audiosrv a moment to fully restart first
+        """Poll registry until our renamed devices appear. Times out after 40s."""
+        print("[WAIT] waiting for devices to appear in registry...")
+        time.sleep(2)
         deadline = time.time() + 40
         while time.time() < deadline:
-            try:
-                out = engine.find_larsen_output()
-                mics = engine.get_mic_list()
-                if out is not None and len(mics) > 0:
-                    return {"ready": True}
-            except Exception:
-                pass
+            state = check_vbaudio_state()
+            print(f"[WAIT] state: {state}")
+            if state["installed"] and state["ours"]:
+                print("[WAIT] devices ready")
+                return {"ready": True}
             time.sleep(1)
+        print("[WAIT] timed out")
         return {"ready": False}
 
     # ── Mic selection & engine control ──────────────────────
