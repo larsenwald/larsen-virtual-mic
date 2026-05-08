@@ -1090,7 +1090,7 @@ function buildPluginHTML(data) {
     <div class="plugin-header" id="header-${data.id}">
       <span class="plugin-type-badge">Gain</span>
       <span class="plugin-header-gap"></span>
-      <span class="plugin-chevron" id="chevron-${data.id}" onclick="togglePlugin('${data.id}')">
+      <span class="plugin-chevron" id="chevron-${data.id}" onclick="togglePlugin('${data.id}')" onmousedown="event.stopPropagation()">
         <svg width="10" height="6" viewBox="0 0 10 6" fill="none">
           <path d="M1 5l4-4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
