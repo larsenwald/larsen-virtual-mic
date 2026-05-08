@@ -444,6 +444,18 @@
   }
   .plugin-node:hover { border-color: var(--border2); }
   .plugin-node.dragging { cursor: grabbing; z-index: 1000; }
+  .plugin-node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent2), 0 4px 20px rgba(0,0,0,0.5); }
+
+  /* Selection rectangle */
+  #select-rect {
+    position: absolute;
+    border: 1px solid var(--accent);
+    background: var(--accent-glow);
+    border-radius: 2px;
+    pointer-events: none;
+    display: none;
+    z-index: 50;
+  }
 
   .plugin-header {
     height: 30px;
@@ -705,6 +717,7 @@
         </svg>
         <div class="canvas-empty-text">Drag a plugin from the sidebar<br>to get started</div>
       </div>
+      <div id="select-rect"></div>
       <div id="viewport">
         <div id="plugin-container"></div>
       </div>
@@ -932,25 +945,91 @@ function screenToWorld(sx, sy) {
   };
 }
 
+let spaceDown = false;
+
 function initCanvasInteraction() {
   const canvas = document.getElementById('canvas');
-
-  // Middle-mouse or Space+drag to pan
+  const rectEl = document.getElementById('select-rect');
   let panning = false, panStart = null, camStart = null;
-  let spaceDown = false;
 
   document.addEventListener('keydown', e => { if (e.code === 'Space') { spaceDown = true; canvas.style.cursor = 'grab'; } });
   document.addEventListener('keyup',   e => { if (e.code === 'Space') { spaceDown = false; canvas.style.cursor = ''; } });
 
   canvas.addEventListener('mousedown', e => {
+    // ── Pan: middle mouse or space+left ──
     if (e.button === 1 || (e.button === 0 && spaceDown)) {
       e.preventDefault();
       panning = true;
       panStart = { x: e.clientX, y: e.clientY };
       camStart = { x: cam.x, y: cam.y };
       canvas.style.cursor = 'grabbing';
+      return;
     }
+
+    // ── Left click only from here ──
+    if (e.button !== 0) return;
+
+    // If click landed on a plugin, let makeDraggable handle it
+    if (e.target.closest('.plugin-node')) return;
+
+    // Empty canvas — deselect or drag-select
+    const cr = canvas.getBoundingClientRect();
+    const startX = e.clientX - cr.left;
+    const startY = e.clientY - cr.top;
+    let selecting = false;
+
+    const onMove = e2 => {
+      const cx = e2.clientX - cr.left;
+      const cy = e2.clientY - cr.top;
+      if (!selecting && Math.abs(cx - startX) < 4 && Math.abs(cy - startY) < 4) return;
+      selecting = true;
+
+      const x = Math.min(startX, cx);
+      const y = Math.min(startY, cy);
+      const w = Math.abs(cx - startX);
+      const h = Math.abs(cy - startY);
+
+      rectEl.style.display = 'block';
+      rectEl.style.left   = x + 'px';
+      rectEl.style.top    = y + 'px';
+      rectEl.style.width  = w + 'px';
+      rectEl.style.height = h + 'px';
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      rectEl.style.display = 'none';
+
+      if (!selecting) {
+        // Plain click on empty canvas → deselect all
+        deselectAll();
+        return;
+      }
+
+      // Select plugins whose header center falls within rect
+      const rx = parseFloat(rectEl.style.left);
+      const ry = parseFloat(rectEl.style.top);
+      const rw = parseFloat(rectEl.style.width);
+      const rh = parseFloat(rectEl.style.height);
+
+      deselectAll();
+      Object.values(plugins).forEach(p => {
+        const header = document.querySelector(`#plugin-${p.data.id} .plugin-header`);
+        if (!header) return;
+        const hr = header.getBoundingClientRect();
+        const hcx = hr.left + hr.width  / 2 - cr.left;
+        const hcy = hr.top  + hr.height / 2 - cr.top;
+        if (hcx >= rx && hcx <= rx + rw && hcy >= ry && hcy <= ry + rh) {
+          selectPlugin(p.data.id);
+        }
+      });
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
   });
+
   document.addEventListener('mousemove', e => {
     if (!panning) return;
     cam.x = camStart.x + (e.clientX - panStart.x);
@@ -961,15 +1040,13 @@ function initCanvasInteraction() {
     if (panning) { panning = false; canvas.style.cursor = spaceDown ? 'grab' : ''; }
   });
 
-  // Scroll to zoom, ctrl+scroll or two-finger swipe to pan (touchpad)
+  // Scroll to zoom, ctrl+scroll to pan (touchpad)
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     if (e.ctrlKey) {
-      // Pinch-to-zoom (touchpad) or two-finger swipe → pan
       cam.x -= e.deltaX;
       cam.y -= e.deltaY;
     } else {
-      // Scroll wheel → zoom toward cursor
       const delta = e.deltaY < 0 ? 1.1 : 0.9;
       const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cam.zoom * delta));
       const cr = canvas.getBoundingClientRect();
@@ -1106,18 +1183,56 @@ async function removePlugin(id) {
   const el = document.getElementById('plugin-' + id);
   if (el) el.remove();
   delete plugins[id];
-  updateArrows();
+  selected.delete(id);
+  requestAnimationFrame(updateArrows);
   updateEmptyState();
+}
+
+// ════════════════════════════════════════
+//  Selection state
+// ════════════════════════════════════════
+
+const selected = new Set(); // plugin ids
+
+function selectPlugin(id) {
+  selected.add(id);
+  document.getElementById('plugin-' + id)?.classList.add('selected');
+}
+
+function deselectPlugin(id) {
+  selected.delete(id);
+  document.getElementById('plugin-' + id)?.classList.remove('selected');
+}
+
+function deselectAll() {
+  selected.forEach(id => {
+    document.getElementById('plugin-' + id)?.classList.remove('selected');
+  });
+  selected.clear();
 }
 
 function togglePlugin(id) {
   const el = document.getElementById('plugin-' + id);
   if (el) {
     el.classList.toggle('expanded');
-    // Wait for CSS transition to finish before redrawing arrows
     setTimeout(updateArrows, 220);
   }
 }
+
+// Delete key removes all selected plugins
+document.addEventListener('keydown', async e => {
+  if (e.key === 'Delete' && selected.size > 0) {
+    const ids = [...selected];
+    for (const id of ids) {
+      await window.pywebview.api.remove_plugin(id);
+      document.getElementById('plugin-' + id)?.remove();
+      delete plugins[id];
+      selected.delete(id);
+    }
+    requestAnimationFrame(updateArrows);
+    updateEmptyState();
+  }
+});
 
 // ════════════════════════════════════════
 //  Plugin dragging on canvas
@@ -1129,7 +1244,6 @@ function makeDraggable(el, id) {
         e.target.closest('.knob-ring')) return;
 
     const startX = e.clientX, startY = e.clientY;
-    // Capture world position of the element at drag start
     const startWorldX = plugins[id].data.x;
     const startWorldY = plugins[id].data.y;
     let dragged = false;
@@ -1140,24 +1254,33 @@ function makeDraggable(el, id) {
       if (!dragged && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
       if (!dragged) { dragged = true; el.classList.add('dragging'); }
 
-      // Convert screen delta to world delta
       const worldX = startWorldX + dx / cam.zoom;
       const worldY = startWorldY + dy / cam.zoom;
       el.style.left = (worldX - 80) + 'px';
       el.style.top  = (worldY - 15) + 'px';
       if (plugins[id]) { plugins[id].data.x = worldX; plugins[id].data.y = worldY; }
-      updateArrows();
+      requestAnimationFrame(updateArrows);
     };
 
     const onUp = async e2 => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       el.classList.remove('dragging');
+
       if (dragged) {
         if (plugins[id])
           await window.pywebview.api.update_plugin_position(id, plugins[id].data.x, plugins[id].data.y);
       } else {
-        if (!e2.target.closest('.plugin-close')) togglePlugin(id);
+        // Click — handle select / expand
+        if (e2.target.closest('.plugin-close')) return;
+        if (selected.has(id)) {
+          // Already selected → toggle expand
+          togglePlugin(id);
+        } else {
+          // Not selected → select it, deselect others
+          deselectAll();
+          selectPlugin(id);
+        }
       }
     };
 
@@ -1165,10 +1288,6 @@ function makeDraggable(el, id) {
     document.addEventListener('mouseup', onUp);
   });
 }
-
-// ════════════════════════════════════════
-//  Order badges + empty state
-// ════════════════════════════════════════
 
 // ════════════════════════════════════════
 //  Arrows + empty state
