@@ -440,8 +440,9 @@
     cursor: default;
     box-shadow: 0 4px 20px rgba(0,0,0,0.45);
     z-index: 2;
+    user-select: none;
+    -webkit-user-select: none;
   }
-  .plugin-node:hover { border-color: var(--border2); }
   .plugin-node.dragging { cursor: grabbing; z-index: 1000; }
   .plugin-node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent2), 0 4px 20px rgba(0,0,0,0.5); }
 
@@ -514,6 +515,8 @@
     transition: max-height 0.2s ease, padding 0.2s ease;
     padding: 0 12px;
     display: flex; flex-direction: column; gap: 10px;
+    user-select: none;
+    -webkit-user-drag: none;
   }
   .plugin-node.expanded .plugin-body { max-height: 120px; padding: 12px 12px 14px; }
 
@@ -1242,8 +1245,11 @@ document.addEventListener('keydown', async e => {
 function makeDraggable(el, id) {
   el.addEventListener('mousedown', e => {
     if (e.target.closest('.plugin-close') ||
-        e.target.closest('.knob-ring')) return;
+        e.target.closest('.knob-ring') ||
+        e.target.closest('.plugin-chevron') ||
+        e.target.closest('.plugin-body')) return;
 
+    e.preventDefault();
     const startX = e.clientX, startY = e.clientY;
     const startElX = parseFloat(el.style.left) || 0;
     const startElY = parseFloat(el.style.top)  || 0;
@@ -1253,7 +1259,7 @@ function makeDraggable(el, id) {
       const dx = e2.clientX - startX;
       const dy = e2.clientY - startY;
       if (!dragged && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
-      if (!dragged) { dragged = true; el.classList.add('dragging'); deselectAll(); selectPlugin(id); document.body.style.cursor = 'grabbing'; }
+      if (!dragged) { dragged = true; el.classList.add('dragging'); el.style.cursor = 'grabbing'; deselectAll(); selectPlugin(id); }
 
       const elX = startElX + dx / cam.zoom;
       const elY = startElY + dy / cam.zoom;
@@ -1267,14 +1273,13 @@ function makeDraggable(el, id) {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       el.classList.remove('dragging');
-      document.body.style.cursor = '';
+      el.style.cursor = '';
 
       if (dragged) {
         if (plugins[id])
           await window.pywebview.api.update_plugin_position(id, plugins[id].data.x, plugins[id].data.y);
       } else {
         if (e2.target.closest('.plugin-close')) return;
-        // Single click → select only
         deselectAll();
         selectPlugin(id);
       }
@@ -1284,7 +1289,6 @@ function makeDraggable(el, id) {
     document.addEventListener('mouseup', onUp);
   });
 
-  // Double-click to expand
   el.addEventListener('dblclick', e => {
     if (e.target.closest('.plugin-close') || e.target.closest('.knob-ring') || e.target.closest('.plugin-chevron')) return;
     e.stopPropagation();
