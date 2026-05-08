@@ -706,9 +706,9 @@
         <div class="canvas-empty-text">Drag a plugin from the sidebar<br>to get started</div>
       </div>
       <div id="viewport">
-        <svg id="arrow-svg" style="position:absolute;top:0;left:0;width:0;height:0;overflow:visible;pointer-events:none;"></svg>
         <div id="plugin-container"></div>
       </div>
+      <svg id="arrow-svg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible;z-index:5;"></svg>
     </div>
 
   </div>
@@ -903,6 +903,7 @@ const ZOOM_MIN = 0.25, ZOOM_MAX = 2;
 function applyTransform() {
   document.getElementById('viewport').style.transform =
     `translate(${cam.x}px, ${cam.y}px) scale(${cam.zoom})`;
+  updateArrows();
 }
 
 function screenToWorld(sx, sy) {
@@ -975,8 +976,8 @@ async function spawnPlugin(type, screenX, screenY) {
   const w = screenToWorld(screenX, screenY);
   const data = await window.pywebview.api.add_plugin(type, w.x, w.y);
   renderPlugin(data);
-  updateArrows();
   updateEmptyState();
+  requestAnimationFrame(updateArrows);
 }
 
 function renderPlugin(data) {
@@ -1094,7 +1095,11 @@ async function removePlugin(id) {
 
 function togglePlugin(id) {
   const el = document.getElementById('plugin-' + id);
-  if (el) { el.classList.toggle('expanded'); updateArrows(); }
+  if (el) {
+    el.classList.toggle('expanded');
+    // Wait for CSS transition to finish before redrawing arrows
+    setTimeout(updateArrows, 220);
+  }
 }
 
 // ════════════════════════════════════════
@@ -1154,43 +1159,49 @@ function makeDraggable(el, id) {
 
 function updateArrows() {
   const svg = document.getElementById('arrow-svg');
-  svg.innerHTML = '';
+  const canvas = document.getElementById('canvas');
+  if (!svg || !canvas) return;
+  svg.innerHTML = `
+    <defs>
+      <marker id="ah" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="var(--border2)"/>
+      </marker>
+    </defs>
+  `;
+
   const sorted = Object.values(plugins).sort((a, b) => a.data.x - b.data.x);
   if (sorted.length < 2) return;
 
-  // Arrowhead marker
-  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-  defs.innerHTML = `
-    <marker id="arrowhead" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
-      <polygon class="arrow-head" points="0 0, 7 3.5, 0 7"/>
-    </marker>
-  `;
-  svg.appendChild(defs);
+  const cr = canvas.getBoundingClientRect();
 
   for (let i = 0; i < sorted.length - 1; i++) {
-    const a = sorted[i];
-    const b = sorted[i + 1];
-
-    const aEl = document.getElementById('plugin-' + a.data.id);
-    const bEl = document.getElementById('plugin-' + b.data.id);
+    const aEl = document.getElementById('plugin-' + sorted[i].data.id);
+    const bEl = document.getElementById('plugin-' + sorted[i + 1].data.id);
     if (!aEl || !bEl) continue;
 
-    // Right-center of a, left-center of b (in world coords)
-    const ax = parseFloat(aEl.style.left) + aEl.offsetWidth;
-    const ay = parseFloat(aEl.style.top)  + aEl.offsetHeight / 2;
-    const bx = parseFloat(bEl.style.left);
-    const by = parseFloat(bEl.style.top)  + bEl.offsetHeight / 2;
+    const aHeader = aEl.querySelector('.plugin-header');
+    const bHeader = bEl.querySelector('.plugin-header');
+    if (!aHeader || !bHeader) continue;
 
-    // Curved bezier
-    const cx1 = ax + (bx - ax) * 0.5;
-    const cy1 = ay;
-    const cx2 = ax + (bx - ax) * 0.5;
-    const cy2 = by;
+    const aRect = aEl.getBoundingClientRect();
+    const bRect = bEl.getBoundingClientRect();
+    const aHRect = aHeader.getBoundingClientRect();
+    const bHRect = bHeader.getBoundingClientRect();
+
+    // Right edge of a, left edge of b — both at header vertical center
+    const ax = aRect.right  - cr.left;
+    const ay = aHRect.top + aHRect.height / 2 - cr.top;
+    const bx = bRect.left   - cr.left;
+    const by = bHRect.top + bHRect.height / 2 - cr.top;
+
+    const cx = (ax + bx) / 2;
 
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('class', 'arrow-line');
-    path.setAttribute('marker-end', 'url(#arrowhead)');
-    path.setAttribute('d', `M ${ax} ${ay} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${bx} ${by}`);
+    path.setAttribute('d', `M ${ax} ${ay} C ${cx} ${ay}, ${cx} ${by}, ${bx} ${by}`);
+    path.setAttribute('stroke', 'var(--border2)');
+    path.setAttribute('stroke-width', '1.5');
+    path.setAttribute('fill', 'none');
+    path.setAttribute('marker-end', 'url(#ah)');
     svg.appendChild(path);
   }
 }
