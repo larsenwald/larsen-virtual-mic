@@ -1080,6 +1080,8 @@ function renderPlugin(data) {
   makeDraggable(el, data.id);
   document.getElementById('plugin-container').appendChild(el);
   plugins[data.id] = { data, el };
+  deselectAll();
+  selectPlugin(data.id);
   refreshKnob(data.id, data.params.gain_db || 0);
   bindKnob(data.id);
 }
