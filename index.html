@@ -485,15 +485,17 @@
 
   .plugin-chevron {
     width: 16px; height: 16px;
-    display: none;
+    display: flex;
     align-items: center; justify-content: center;
     color: var(--text-dim);
     cursor: pointer;
     flex-shrink: 0;
-    transition: color 0.1s;
+    transition: color 0.1s, opacity 0.15s;
+    opacity: 0;
+    pointer-events: none;
   }
   .plugin-chevron:hover { color: var(--text); }
-  .plugin-node.expanded .plugin-chevron { display: flex; }
+  .plugin-node.expanded .plugin-chevron { opacity: 1; pointer-events: all; }
 
   .plugin-close {
     width: 16px; height: 16px;
@@ -1070,7 +1072,7 @@ async function spawnPlugin(type, screenX, screenY) {
 
 function renderPlugin(data) {
   const el = document.createElement('div');
-  el.className = 'plugin-node';
+  el.className = 'plugin-node expanded';
   el.id = 'plugin-' + data.id;
   el.style.left = (data.x - 80) + 'px';
   el.style.top  = (data.y - 50) + 'px';
