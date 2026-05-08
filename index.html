@@ -491,12 +491,52 @@
   }
   .param-value { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--accent); }
 
-  .knob-wrap { display: flex; justify-content: center; padding: 4px 0 2px; }
-  .knob { width: 44px; height: 44px; cursor: ns-resize; display: block; }
-  .knob-track  { stroke: var(--bg3); stroke-width: 3.5; fill: none; }
-  .knob-fill   { stroke: var(--accent); stroke-width: 3.5; fill: none; stroke-linecap: round; }
-  .knob-dot    { fill: var(--accent); }
-  .knob-center { fill: var(--bg2); }
+  .knob-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 0 2px; }
+
+  /* Outer ring — static track */
+  .knob-ring {
+    position: relative;
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    background: var(--bg3);
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.04);
+    cursor: ns-resize;
+    flex-shrink: 0;
+  }
+  /* Rotating body inside */
+  .knob-body {
+    position: absolute;
+    inset: 5px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #2a2a35, #1a1a22);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.5), 0 1px 0 rgba(255,255,255,0.06);
+    transform-origin: center center;
+    /* default: min position = -135deg */
+    transform: rotate(-135deg);
+    pointer-events: none;
+  }
+  /* Marker dot on the rotating body */
+  .knob-body::after {
+    content: '';
+    position: absolute;
+    width: 3px; height: 3px;
+    border-radius: 50%;
+    background: var(--accent);
+    top: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    box-shadow: 0 0 4px var(--accent);
+  }
+  /* Arc track drawn behind knob-ring using SVG overlay */
+  .knob-svg {
+    position: absolute;
+    inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    overflow: visible;
+  }
+  .knob-arc-track { stroke: rgba(255,255,255,0.06); stroke-width: 2.5; fill: none; stroke-linecap: round; }
+  .knob-arc-fill  { stroke: var(--accent); stroke-width: 2.5; fill: none; stroke-linecap: round; transition: none; }
 </style>
 </head>
 <body>
@@ -878,12 +918,19 @@ function buildPluginHTML(data) {
           <span class="param-value" id="gain-val-${data.id}">${db} dB</span>
         </div>
         <div class="knob-wrap">
-          <svg class="knob" id="knob-${data.id}" viewBox="0 0 44 44">
-            <circle class="knob-center" cx="22" cy="22" r="14"/>
-            <path class="knob-track"  d="M 22 22 m -12 0 a 12 12 0 1 1 24 0" stroke-dasharray="75.4 75.4"/>
-            <path class="knob-fill"   d="M 22 22 m -12 0 a 12 12 0 1 1 24 0" stroke-dasharray="0 75.4" id="knob-fill-${data.id}"/>
-            <circle class="knob-dot" id="knob-dot-${data.id}" cx="22" cy="10" r="2.5"/>
-          </svg>
+          <div class="knob-ring" id="knob-${data.id}">
+            <div class="knob-body" id="knob-body-${data.id}"></div>
+            <svg class="knob-svg" viewBox="0 0 42 42">
+              <!-- track arc: 135deg to 405deg (270deg sweep), radius 19, center 21,21 -->
+              <path class="knob-arc-track" id="knob-track-${data.id}"
+                d="M 6.03 35.97 A 19 19 0 1 1 35.97 35.97"
+              />
+              <path class="knob-arc-fill" id="knob-arc-${data.id}"
+                d="M 6.03 35.97 A 19 19 0 1 1 35.97 35.97"
+                stroke-dasharray="0 100"
+              />
+            </svg>
+          </div>
         </div>
       </div>
     </div>
@@ -891,29 +938,32 @@ function buildPluginHTML(data) {
 }
 
 function refreshKnob(id, db) {
-  // Range: -40 to +40 dB
+  // Map -40..+40 → 0..1
   const t = Math.max(0, Math.min(1, (db + 40) / 80));
-  // Full arc dasharray = 75.4, usable 270° = 56.6
-  const fill = document.getElementById('knob-fill-' + id);
-  if (fill) fill.style.strokeDasharray = `${(t * 56.6).toFixed(1)} 75.4`;
-  const dot = document.getElementById('knob-dot-' + id);
-  if (dot) {
-    const rad = ((-135 + t * 270) - 90) * Math.PI / 180;
-    dot.setAttribute('cx', (22 + 12 * Math.cos(rad)).toFixed(2));
-    dot.setAttribute('cy', (22 + 12 * Math.sin(rad)).toFixed(2));
-  }
+  // Rotate body: -135deg (min) → +135deg (max), so range = 270deg
+  const deg = -135 + t * 270;
+  const body = document.getElementById('knob-body-' + id);
+  if (body) body.style.transform = `rotate(${deg}deg)`;
+
+  // Arc fill: the SVG path total length ≈ 89.5 (270° of radius-19 circle)
+  // We use stroke-dasharray to fill proportionally
+  const arcLen = 89.5;
+  const arc = document.getElementById('knob-arc-' + id);
+  if (arc) arc.style.strokeDasharray = `${(t * arcLen).toFixed(1)} ${arcLen}`;
 }
 
 function bindKnob(id) {
-  const knob = document.getElementById('knob-' + id);
-  if (!knob) return;
+  const ring = document.getElementById('knob-' + id);
+  if (!ring) return;
   let startY, startVal;
-  knob.addEventListener('mousedown', e => {
+  ring.addEventListener('mousedown', e => {
     e.preventDefault(); e.stopPropagation();
     startY = e.clientY;
     startVal = plugins[id] ? (plugins[id].data.params.gain_db || 0) : 0;
     const onMove = e2 => {
-      const val = Math.max(-40, Math.min(40, startVal + (startY - e2.clientY) * 0.5));
+      // 1px vertical drag = 0.5 dB, shift held = fine tune 0.1 dB/px
+      const sensitivity = e2.shiftKey ? 0.1 : 0.5;
+      const val = Math.max(-40, Math.min(40, startVal + (startY - e2.clientY) * sensitivity));
       onGainChange(id, val);
     };
     const onUp = () => {
@@ -922,6 +972,11 @@ function bindKnob(id) {
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
+  });
+  // Double-click to reset to 0
+  ring.addEventListener('dblclick', e => {
+    e.stopPropagation();
+    onGainChange(id, 0);
   });
 }
 
@@ -954,7 +1009,7 @@ function togglePlugin(id) {
 function makeDraggable(el, id) {
   el.addEventListener('mousedown', e => {
     if (e.target.closest('.plugin-close') ||
-        e.target.closest('.knob')) return;
+        e.target.closest('.knob-ring')) return;
 
     const canvas = document.getElementById('canvas');
     const cr = canvas.getBoundingClientRect();
