@@ -611,7 +611,7 @@
     </div>
     <div class="setup-actions">
       <button class="btn btn-primary" onclick="consentAndInstall()">Install &amp; continue</button>
-      <button class="btn btn-danger"  onclick="window.close()">Decline &amp; exit</button>
+      <button class="btn btn-danger"  onclick="window.pywebview.api.quit_app()">Decline &amp; exit</button>
     </div>
   </div>
 </div>
@@ -631,7 +631,7 @@
     </div>
     <div class="setup-actions">
       <button class="btn btn-primary" onclick="consentAndInstall()">Take ownership &amp; continue</button>
-      <button class="btn btn-danger"  onclick="window.close()">Decline &amp; exit</button>
+      <button class="btn btn-danger"  onclick="window.pywebview.api.quit_app()">Decline &amp; exit</button>
     </div>
   </div>
 </div>
@@ -681,7 +681,7 @@
     <div class="setup-title">Setup failed</div>
     <div class="setup-body" id="error-body">An unexpected error occurred during setup.</div>
     <div class="setup-actions">
-      <button class="btn btn-ghost" onclick="window.close()">Exit</button>
+      <button class="btn btn-ghost" onclick="window.pywebview.api.quit_app()">Exit</button>
     </div>
   </div>
 </div>

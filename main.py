@@ -385,6 +385,13 @@ engine = AudioEngine()
 class API:
     # ── Setup flow ──────────────────────────────────────────
 
+    def quit_app(self):
+        engine.stop()
+        if tray_icon:
+            tray_icon.stop()
+        window.destroy()
+        os._exit(0)
+
     def get_vbaudio_state(self):
         """Called on launch. Returns install state so frontend can decide which screen to show."""
         return check_vbaudio_state()
@@ -570,9 +577,11 @@ if __name__ == "__main__":
         window.restore()
 
     def quit_app():
-        tray_icon.stop()
+        if tray_icon:
+            tray_icon.stop()
         engine.stop()
         window.destroy()
+        os._exit(0)
 
     def on_closing():
         """Intercept window close — hide instead of closing."""
