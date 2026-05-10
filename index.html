@@ -831,6 +831,8 @@ async function startup() {
   showScreen('checking');
   await delay(500);
 
+  const minimized = await window.pywebview.api.get_start_minimized();
+
   let state;
   try {
     state = await window.pywebview.api.get_vbaudio_state();
@@ -839,31 +841,31 @@ async function startup() {
     return;
   }
 
-  // ✅ Installed + names exactly correct → pass through
+  // ✅ Names correct → pass through
   if (state.installed && state.names_correct) {
     await loadMainScreen();
     return;
   }
 
-  // ⚠️ Installed + we own it but names reverted (e.g. after reboot) → silent reconfigure
+  // ⚠️ Names reverted after reboot → silent reconfigure, no user prompt
   if (state.installed && state.names_ours && !state.names_correct) {
     document.getElementById('check-label').textContent = 'Reconfiguring devices…';
     const result = await window.pywebview.api.run_reconfigure();
     if (!result.success) {
-      showError(result.error || 'Reconfigure failed.');
+      // If minimized, don't show error — just silently fail and show window
+      if (!minimized) showError(result.error || 'Reconfigure failed.');
+      else showScreen('error'); // still show error even if minimized, user needs to know
       return;
     }
     await loadMainScreen();
     return;
   }
 
-  // ❌ Not installed → fresh install consent
+  // ❌ Not installed or not ours — always show window regardless of --minimized
   if (!state.installed) {
     showScreen('consent-fresh');
     return;
   }
-
-  // ✅ Installed but not ours → hijack warning
   showScreen('consent-hijack');
 }
 
@@ -900,10 +902,31 @@ async function loadMainScreen() {
     opt.textContent = m.name;
     sel.appendChild(opt);
   });
-  if (mics.length === 1) {
+
+  // Load saved config
+  const config = await window.pywebview.api.get_config();
+
+  // Restore mic
+  const savedMic = config.mic;
+  if (savedMic && mics.find(m => m.name === savedMic)) {
+    sel.value = savedMic;
+    await onMicChange(savedMic);
+  } else if (mics.length === 1) {
     sel.value = mics[0].name;
     await onMicChange(mics[0].name);
   }
+
+  // Restore plugins
+  if (config.plugins && config.plugins.length > 0) {
+    for (const p of config.plugins) {
+      renderPlugin(p);
+      // Restore engine state for each plugin
+      await window.pywebview.api.add_plugin_restore(p.type, p.x, p.y, p.id, p.params);
+    }
+    requestAnimationFrame(updateArrows);
+    updateEmptyState();
+  }
+
   showScreen('main');
   initCanvasInteraction();
 }

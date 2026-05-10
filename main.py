@@ -11,9 +11,44 @@ import uuid
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+    MEIPASS_DIR = sys._MEIPASS
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    MEIPASS_DIR = BASE_DIR
 SCRIPTS_DIR = os.path.join(BASE_DIR, "scripts")
 DRIVERS_DIR = os.path.join(BASE_DIR, "driver")
+APPDATA_DIR = os.path.join(os.environ.get("APPDATA", ""), "LarsenwaldVM")
+CONFIG_PATH = os.path.join(APPDATA_DIR, "config.json")
+
+# ─────────────────────────────────────────────────────────────
+#  Config persistence
+# ─────────────────────────────────────────────────────────────
+
+def save_config():
+    try:
+        os.makedirs(APPDATA_DIR, exist_ok=True)
+        config = {
+            "mic": engine.selected_mic_name,
+            "plugins": [p.to_dict() for p in engine.sorted_plugins()],
+        }
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+        print(f"[CONFIG] saved to {CONFIG_PATH}")
+    except Exception as e:
+        print(f"[CONFIG] save error: {e}")
+
+def load_config() -> dict:
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            print(f"[CONFIG] loaded from {CONFIG_PATH}")
+            return config
+    except Exception as e:
+        print(f"[CONFIG] load error: {e}")
+    return {}
 
 # ─────────────────────────────────────────────────────────────
 #  Plugin system
@@ -53,6 +88,7 @@ class AudioEngine:
         self.running = False
         self.samplerate = 48000
         self.blocksize = 512
+        self.selected_mic_name: Optional[str] = None
 
     def sorted_plugins(self) -> list[Plugin]:
         return sorted(self.plugins, key=lambda p: p.x)
@@ -247,9 +283,9 @@ class AudioEngine:
 # ─────────────────────────────────────────────────────────────
 
 def run_powershell(script_path: str, args: list[str] = []) -> tuple[bool, str]:
-    cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", script_path] + args
+    cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script_path] + args
     print(f"[PS] running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, creationflags=0x08000000)
     output = result.stdout + result.stderr
     print(f"[PS] exit code: {result.returncode}")
     print(f"[PS] output:\n{output.strip()}")
@@ -263,7 +299,7 @@ def run_configure_as_system() -> tuple[bool, str]:
     print(f"[CONFIGURE] wrapper tmp: {tmp}")
 
     wrapper = f"""
-$a = New-ScheduledTaskAction -Execute "powershell" -Argument "-ExecutionPolicy Bypass -File `"{script_path}`""
+$a = New-ScheduledTaskAction -Execute "powershell" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"{script_path}`""
 Register-ScheduledTask -TaskName "LarsenConfigure" -Action $a -Principal (New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest) -Force | Out-Null
 Start-ScheduledTask -TaskName "LarsenConfigure"
 
@@ -283,8 +319,8 @@ Write-Output "WRAPPER_DONE"
 
     print(f"[CONFIGURE] starting wrapper...")
     result = subprocess.run(
-        ["powershell", "-ExecutionPolicy", "Bypass", "-File", tmp],
-        capture_output=True, text=True
+        ["powershell", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", tmp],
+        capture_output=True, text=True, creationflags=0x08000000
     )
     try:
         os.remove(tmp)
@@ -392,6 +428,12 @@ class API:
         window.destroy()
         os._exit(0)
 
+    def get_start_minimized(self):
+        return START_MINIMIZED
+
+    def get_config(self):
+        return load_config()
+
     def get_vbaudio_state(self):
         """Called on launch. Returns install state so frontend can decide which screen to show."""
         return check_vbaudio_state()
@@ -480,8 +522,11 @@ class API:
             print(f"[SET_MIC] '{device_name}' not found in mic list: {[m['name'] for m in mics]}")
             return {"success": False, "error": f"Mic '{device_name}' not found"}
         engine.input_device = matched["index"]
+        engine.selected_mic_name = matched["name"]
         print(f"[SET_MIC] using input={engine.input_device} ({matched['name']}) output={engine.output_device}")
         ok = engine.start()
+        if ok:
+            save_config()
         return {"success": ok, "running": engine.running}
 
     def get_engine_status(self):
@@ -497,16 +542,21 @@ class API:
         return [p.to_dict() for p in engine.sorted_plugins()]
 
     def add_plugin(self, plugin_type: str, x: float, y: float):
-        defaults = {
-            "gain": {"gain_db": 0.0},
-        }
+        defaults = { "gain": {"gain_db": 0.0} }
         p = Plugin(
             id=str(uuid.uuid4()),
             type=plugin_type,
-            x=float(x),
-            y=float(y),
+            x=float(x), y=float(y),
             params=defaults.get(plugin_type, {}),
         )
+        with engine.lock:
+            engine.plugins.append(p)
+        save_config()
+        return p.to_dict()
+
+    def add_plugin_restore(self, plugin_type: str, x: float, y: float, plugin_id: str, params: dict):
+        """Restore a plugin from saved config — preserves original ID and params."""
+        p = Plugin(id=plugin_id, type=plugin_type, x=float(x), y=float(y), params=params)
         with engine.lock:
             engine.plugins.append(p)
         return p.to_dict()
@@ -517,6 +567,7 @@ class API:
                 if p.id == plugin_id:
                     p.x = float(x)
                     p.y = float(y)
+                    save_config()
                     return {"success": True}
         return {"success": False}
 
@@ -525,6 +576,7 @@ class API:
             for p in engine.plugins:
                 if p.id == plugin_id:
                     p.params[param] = value
+                    save_config()
                     return {"success": True}
         return {"success": False}
 
@@ -532,7 +584,8 @@ class API:
         with engine.lock:
             before = len(engine.plugins)
             engine.plugins = [p for p in engine.plugins if p.id != plugin_id]
-            return {"success": len(engine.plugins) < before}
+        save_config()
+        return {"success": len(engine.plugins) < before}
 
     def get_plugin_chain_order(self):
         """Returns plugin IDs in signal chain order (left to right by x)."""
@@ -557,8 +610,10 @@ if __name__ == "__main__":
     import pystray
     from PIL import Image
 
+    START_MINIMIZED = '--minimized' in sys.argv
+
     api = API()
-    index_path = os.path.join(BASE_DIR, "index.html")
+    index_path = os.path.join(MEIPASS_DIR, "index.html")
     window = webview.create_window(
         title="Larsenwald Virtual Mic",
         url=f"file://{index_path}",
@@ -586,7 +641,7 @@ if __name__ == "__main__":
     def on_closing():
         """Intercept window close — hide instead of closing."""
         window.hide()
-        return False  # Prevent actual close
+        return False
 
     def setup_tray(icon):
         icon.visible = True
@@ -603,6 +658,17 @@ if __name__ == "__main__":
     )
 
     window.events.closing += on_closing
+
+    def on_shown():
+        """Called when window is ready. If --minimized and setup is clean, hide immediately."""
+        if not START_MINIMIZED:
+            return
+        state = check_vbaudio_state()
+        # Only hide if we don't need user interaction
+        if state["installed"] and (state["names_correct"] or state["names_ours"]):
+            window.hide()
+
+    window.events.shown += on_shown
 
     # Run tray in background thread
     tray_thread = threading.Thread(target=tray_icon.run, args=(setup_tray,), daemon=True)
