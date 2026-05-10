@@ -1280,8 +1280,13 @@ function makeDraggable(el, id) {
           await window.pywebview.api.update_plugin_position(id, plugins[id].data.x, plugins[id].data.y);
       } else {
         if (e2.target.closest('.plugin-close')) return;
-        deselectAll();
-        selectPlugin(id);
+        if (e2.shiftKey) {
+          if (selected.has(id)) deselectPlugin(id);
+          else selectPlugin(id);
+        } else {
+          deselectAll();
+          selectPlugin(id);
+        }
       }
     };
 
